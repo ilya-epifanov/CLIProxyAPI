@@ -99,7 +99,8 @@ func main() {
 	// For legacy --discover-json flag or JSON requests, keep stdout clean
 	isJSONDiscover := argvEnablesBoolFlag(os.Args[1:], "discover-json")
 	isDiscoverMode := isJSONDiscover || argvEnablesBoolFlag(os.Args[1:], "discover")
-	if !isJSONDiscover {
+	// -hash-management-key prints only the hash, so scripts can capture stdout.
+	if !isJSONDiscover && !argvEnablesBoolFlag(os.Args[1:], "hash-management-key") {
 		fmt.Printf("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 	}
 
@@ -131,6 +132,7 @@ func main() {
 	var standalone bool
 	var managementBaseURL string
 	var localModel bool
+	var hashManagementKey bool
 
 	// Define command-line flags for different operation modes.
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
@@ -160,6 +162,7 @@ func main() {
 	flag.BoolVar(&standalone, "standalone", false, "In TUI mode, start an embedded local server")
 	flag.StringVar(&managementBaseURL, "management-base-url", "", "Base URL of remote management API for TUI client mode (e.g. https://proxy.example.com)")
 	flag.BoolVar(&localModel, "local-model", false, "Use embedded model catalogs unless models.catalog, models.codex-catalog, or models.devin-catalog explicitly overrides the source")
+	flag.BoolVar(&hashManagementKey, "hash-management-key", false, "Read a management key on stdin, print its bcrypt hash for management.secret-key, and exit")
 
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
@@ -198,6 +201,10 @@ func main() {
 
 	// Parse the command-line flags.
 	flag.Parse()
+
+	if hashManagementKey {
+		os.Exit(cmd.DoHashManagementKey(os.Stdin, os.Stdout, os.Stderr))
+	}
 
 	if discoverGateways || discoverJSON {
 		cfgInclude, cfgExclude := cmd.LoadDiscoveryScanFilters(configPath)
