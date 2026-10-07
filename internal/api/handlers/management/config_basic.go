@@ -305,6 +305,9 @@ func (h *Handler) PutForceModelPrefix(c *gin.Context) {
 	h.updateBoolField(c, func(v bool) { h.cfg.ForceModelPrefix = v })
 }
 
+// routingStrategies lists the canonical names that normalizeRoutingStrategy returns.
+var routingStrategies = []string{"round-robin", "weighted-round-robin", "fill-first"}
+
 func normalizeRoutingStrategy(strategy string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(strategy))
 	switch normalized {
