@@ -77,3 +77,8 @@ func hashSecret(secret string) (string, error) {
 	}
 	return string(hashedBytes), nil
 }
+
+// HashSecret returns the bcrypt hash that management.secret-key accepts in place of the plaintext key.
+func HashSecret(secret string) (string, error) {
+	return hashSecret(secret)
+}
