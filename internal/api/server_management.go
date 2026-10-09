@@ -334,5 +334,5 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		}
 	}
 
-	c.File(filePath)
+	serveManagementPanelFile(c, filePath)
 }
