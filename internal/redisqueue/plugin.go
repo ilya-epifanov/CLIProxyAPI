@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
-	coresession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
@@ -27,30 +26,20 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		return
 	}
 
-	timestamp := record.RequestedAt
-	if timestamp.IsZero() {
-		timestamp = time.Now()
-	}
+	record = coreusage.Resolve(ctx, record).Record
 
-	modelName := strings.TrimSpace(record.Model)
-	if modelName == "" {
-		modelName = "unknown"
-	}
+	modelName := record.Model
 	aliasName := strings.TrimSpace(record.Alias)
 	if aliasName == "" {
 		aliasName = modelName
 	}
-	provider := strings.TrimSpace(record.Provider)
-	if provider == "" {
-		provider = "unknown"
-	}
 	executorType := strings.TrimSpace(record.ExecutorType)
 	if executorType == "" {
-		executorType = "unknown"
+		executorType = coreusage.UnknownValue
 	}
 	authType := strings.TrimSpace(record.AuthType)
 	if authType == "" {
-		authType = "unknown"
+		authType = coreusage.UnknownValue
 	}
 	apiKey := strings.TrimSpace(record.APIKey)
 	requestID := strings.TrimSpace(internallogging.GetRequestID(ctx))
@@ -76,21 +65,8 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	responseServiceTier := strings.TrimSpace(record.ResponseServiceTier)
 	responseModel := strings.TrimSpace(record.ResponseModel)
 	clientRequestMetadata := internallogging.GetClientRequestMetadata(ctx)
-	sessionID := strings.TrimSpace(record.SessionID)
-	parentSessionID := strings.TrimSpace(record.ParentSessionID)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(clientRequestMetadata.SessionID)
-		parentSessionID = strings.TrimSpace(clientRequestMetadata.ParentSessionID)
-	} else if parentSessionID == "" && sessionID == strings.TrimSpace(clientRequestMetadata.SessionID) {
-		parentSessionID = strings.TrimSpace(clientRequestMetadata.ParentSessionID)
-	}
-	sessionID = coresession.NormalizeToCanonicalUUID(sessionID)
-	parentSessionID = coresession.NormalizeToCanonicalUUID(parentSessionID)
-	if sessionID == "" || sessionID == parentSessionID {
-		parentSessionID = ""
-	}
 
-	usageDetail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+	usageDetail := record.Detail
 	tokens := tokenStats{
 		InputTokens:            usageDetail.InputTokens,
 		OutputTokens:           usageDetail.OutputTokens,
@@ -102,19 +78,8 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		TotalTokens:            usageDetail.TotalTokens,
 	}
 
-	failed := record.Failed
-	if !failed {
-		failed = !resolveSuccess(ctx)
-	}
-	fail := resolveFail(ctx, record, failed)
-
-	stream := record.Stream
-	if !stream {
-		stream = coreusage.StreamFromContext(ctx)
-	}
-
 	detail := requestDetail{
-		Timestamp:        timestamp,
+		Timestamp:        record.RequestedAt,
 		LatencyMs:        record.Latency.Milliseconds(),
 		TTFTMs:           record.TTFT.Milliseconds(),
 		Source:           record.Source,
@@ -125,10 +90,10 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		XForwardedFor:    clientRequestMetadata.XForwardedFor,
 		UserAgent:        clientRequestMetadata.UserAgent,
 		Tokens:           tokens,
-		Failed:           failed,
+		Failed:           record.Failed,
 		Generate:         coreusage.GenerateEnabled(record.Generate),
-		Stream:           stream,
-		Fail:             fail,
+		Stream:           record.Stream,
+		Fail:             failDetail{StatusCode: record.Fail.StatusCode, Body: record.Fail.Body},
 		ResponseHeaders:  record.ResponseHeaders,
 	}
 
@@ -136,7 +101,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		requestDetail:       detail,
 		AccountingVersion:   coreusage.TokenAccountingSchemaVersion,
 		TokenBreakdown:      usageDetail.TokenBreakdown,
-		Provider:            provider,
+		Provider:            record.Provider,
 		ExecutorType:        executorType,
 		Model:               modelName,
 		Alias:               aliasName,
@@ -146,8 +111,8 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		RequestID:           requestID,
 		ExecutionID:         executionID,
 		TraceID:             traceID,
-		SessionID:           sessionID,
-		ParentSessionID:     parentSessionID,
+		SessionID:           record.SessionID,
+		ParentSessionID:     record.ParentSessionID,
 		NodeKind:            strings.TrimSpace(clientRequestMetadata.NodeKind),
 		IsFork:              clientRequestMetadata.IsFork,
 		IsCompaction:        clientRequestMetadata.IsCompaction,
@@ -222,33 +187,6 @@ type failDetail struct {
 	Body       string `json:"body"`
 }
 
-func resolveFail(ctx context.Context, record coreusage.Record, failed bool) failDetail {
-	fail := failDetail{
-		StatusCode: record.Fail.StatusCode,
-		Body:       strings.TrimSpace(record.Fail.Body),
-	}
-	if !failed {
-		return failDetail{StatusCode: 200}
-	}
-	if fail.StatusCode <= 0 {
-		fail.StatusCode = internallogging.GetResponseStatus(ctx)
-	}
-	if fail.StatusCode <= 0 {
-		fail.StatusCode = 500
-	}
-	return fail
-}
-
-func resolveSuccess(ctx context.Context) bool {
-	status := internallogging.GetResponseStatus(ctx)
-	if status == 0 {
-		return true
-	}
-	return status < httpStatusBadRequest
-}
-
 func resolveEndpoint(ctx context.Context) string {
 	return strings.TrimSpace(internallogging.GetEndpoint(ctx))
 }
-
-const httpStatusBadRequest = 400
