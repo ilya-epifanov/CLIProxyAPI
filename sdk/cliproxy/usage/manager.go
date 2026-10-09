@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -302,6 +303,8 @@ type Manager struct {
 	once     sync.Once
 	stopOnce sync.Once
 	cancel   context.CancelFunc
+	// done is closed when the dispatcher returns after delivering the queue.
+	done chan struct{}
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -315,7 +318,7 @@ type Manager struct {
 
 // NewManager constructs a manager with a buffered queue.
 func NewManager(buffer int) *Manager {
-	m := &Manager{}
+	m := &Manager{done: make(chan struct{})}
 	m.cond = sync.NewCond(&m.mu)
 	return m
 }
@@ -349,6 +352,30 @@ func (m *Manager) Stop() {
 		m.mu.Unlock()
 		m.cond.Broadcast()
 	})
+}
+
+// StopAndWait stops the dispatcher and waits until every queued record has
+// been delivered, or until ctx ends.
+func (m *Manager) StopAndWait(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	m.Stop()
+	// A manager that never started has no dispatcher to wait for; consuming the
+	// start once also keeps a later Publish from starting one.
+	m.once.Do(func() { close(m.done) })
+	// done wins over an already expired ctx.
+	select {
+	case <-m.done:
+		return nil
+	default:
+	}
+	select {
+	case <-m.done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("usage: wait for queued records: %w", ctx.Err())
+	}
 }
 
 // Register appends a plugin to the delivery list.
@@ -418,6 +445,7 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 }
 
 func (m *Manager) run(ctx context.Context) {
+	defer close(m.done)
 	for {
 		m.mu.Lock()
 		for !m.closed && len(m.queue) == 0 {
@@ -475,6 +503,9 @@ func PublishRecord(ctx context.Context, record Record) { DefaultManager().Publis
 
 // StartDefault starts the default manager's dispatcher.
 func StartDefault(ctx context.Context) { DefaultManager().Start(ctx) }
+
+// StopDefaultAndWait stops the default manager and waits for queued records to be delivered.
+func StopDefaultAndWait(ctx context.Context) error { return DefaultManager().StopAndWait(ctx) }
 
 // StopDefault stops the default manager's dispatcher.
 func StopDefault() { DefaultManager().Stop() }
