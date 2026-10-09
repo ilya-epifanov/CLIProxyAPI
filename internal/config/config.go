@@ -47,6 +47,9 @@ type Config struct {
 	// Pprof config controls the optional pprof HTTP debug server.
 	Pprof PprofConfig `yaml:"pprof" json:"pprof"`
 
+	// Metrics controls the optional Prometheus metrics HTTP server.
+	Metrics MetricsConfig `yaml:"metrics" json:"metrics"`
+
 	// Discovery configures local network mDNS / DNS-SD service advertising.
 	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
 
@@ -71,6 +74,9 @@ type Config struct {
 	// in memory for Management API consumers.
 	// Default: 60. Max: 3600.
 	RedisUsageQueueRetentionSeconds int `yaml:"redis-usage-queue-retention-seconds" json:"redis-usage-queue-retention-seconds"`
+
+	// UsageStore controls the persistent SQLite usage store.
+	UsageStore UsageStoreConfig `yaml:"usage-store" json:"usage-store"`
 
 	// DisableCooling disables auth/model cooldown scheduling when true unless a credential or provider overrides it.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`

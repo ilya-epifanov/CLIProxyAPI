@@ -1107,10 +1107,27 @@ observability:
     # Default: 60. Max: 3600.
     redis-usage-queue-retention-seconds: 60
 
+    # Persistent usage history in a SQLite file, served to the management panel.
+    # enable and path are read at start; changing them requires a restart.
+    store:
+      enable: false
+      # Empty means usage.db in WRITABLE_PATH, else in the working directory.
+      path: ""
+      # Days to keep one row per upstream request. 0 means the default.
+      retention-days: 30
+      # Days to keep hourly totals per provider, credential and model. 0 means the default.
+      rollup-retention-days: 730
+
   # Enable pprof HTTP debug server (host:port). Keep it bound to localhost for safety.
   pprof:
     enable: false
     addr: "127.0.0.1:8316"
+
+  # Prometheus metrics at /metrics (host:port). It exposes credential labels and emails,
+  # so keep it bound to localhost.
+  metrics:
+    enable: false
+    addr: "127.0.0.1:9464"
 
 # Standard dynamic library plugins are trusted in-process code. They are disabled by default.
 # Build Go examples with go build -buildmode=c-shared for the target GOOS/GOARCH.

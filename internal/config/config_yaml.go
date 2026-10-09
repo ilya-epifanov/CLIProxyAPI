@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -406,6 +407,8 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		switch fullPath {
 		case "pprof.addr":
 			return node.Value == DefaultPprofAddr
+		case "metrics.addr":
+			return node.Value == DefaultMetricsAddr
 		case "remote-management.panel-github-repository":
 			return node.Value == DefaultPanelGitHubRepository
 		case "plugins.dir":
@@ -420,6 +423,10 @@ func isKnownDefaultValue(path []string, node *yaml.Node) bool {
 		switch fullPath {
 		case "error-logs-max-files":
 			return node.Value == "10"
+		case "usage-store.retention-days":
+			return node.Value == strconv.Itoa(DefaultUsageStoreRetentionDays)
+		case "usage-store.rollup-retention-days":
+			return node.Value == strconv.Itoa(DefaultUsageStoreRollupRetentionDays)
 		}
 	}
 
