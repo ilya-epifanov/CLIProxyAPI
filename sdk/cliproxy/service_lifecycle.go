@@ -76,6 +76,10 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}()
 
+	if errUsage := s.startUsageObservability(ctx); errUsage != nil {
+		return errUsage
+	}
+
 	if !homeEnabled {
 		if errEnsureAuthDir := s.ensureAuthDir(); errEnsureAuthDir != nil {
 			return errEnsureAuthDir
@@ -136,7 +140,11 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	// handlers no longer depend on legacy clients; pass nil slice initially
-	s.server = api.NewServer(cfg, s.coreManager, s.accessManager, s.configPath, s.serverOptions...)
+	serverOptions := s.serverOptions
+	if s.usageStore != nil {
+		serverOptions = append(append([]api.ServerOption(nil), serverOptions...), api.WithUsageStore(s.usageStore))
+	}
+	s.server = api.NewServer(cfg, s.coreManager, s.accessManager, s.configPath, serverOptions...)
 	s.syncPluginRuntimeConfig(ctx)
 	if homeEnabled {
 		s.configRuntimeMu.Lock()
@@ -193,6 +201,7 @@ func (s *Service) Run(ctx context.Context) error {
 	s.configRuntimeMu.Lock()
 	currentCfg := s.currentConfig()
 	s.applyPprofConfig(currentCfg)
+	s.applyMetricsConfigContext(ctx, currentCfg)
 	s.applyDiscoveryConfig(currentCfg)
 	s.configRuntimeMu.Unlock()
 
@@ -356,6 +365,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			}
 		}
 
+		if errShutdownMetrics := s.shutdownMetrics(ctx); errShutdownMetrics != nil {
+			log.Errorf("failed to stop metrics server: %v", errShutdownMetrics)
+			if shutdownErr == nil {
+				shutdownErr = errShutdownMetrics
+			}
+		}
+
 		if errShutdownDiscovery := s.shutdownDiscovery(); errShutdownDiscovery != nil {
 			log.Errorf("failed to stop discovery advertiser: %v", errShutdownDiscovery)
 			if shutdownErr == nil {
@@ -400,7 +416,18 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		helps.RetireProxyPoolPublisher(s.proxyPoolPublisher)
-		usage.StopDefault()
+		if errStopUsage := usage.StopDefaultAndWait(ctx); errStopUsage != nil {
+			log.Errorf("failed to deliver queued usage records: %v", errStopUsage)
+			if shutdownErr == nil {
+				shutdownErr = errStopUsage
+			}
+		}
+		if errCloseStore := s.closeUsageStore(ctx); errCloseStore != nil {
+			log.Errorf("failed to close usage store: %v", errCloseStore)
+			if shutdownErr == nil {
+				shutdownErr = errCloseStore
+			}
+		}
 	})
 	return shutdownErr
 }

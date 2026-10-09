@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
@@ -28,6 +29,7 @@ type serverOptionConfig struct {
 	pluginHost            *pluginhost.Host
 	configReloadHook      func(context.Context, *config.Config)
 	exampleAPIKeySafeMode bool
+	usageStore            *usagestore.Store
 }
 
 // ServerOption customises HTTP server construction.
@@ -130,6 +132,13 @@ func WithPluginInterceptorHost(host handlers.PluginInterceptorHost) ServerOption
 func WithPluginHost(host *pluginhost.Host) ServerOption {
 	return func(cfg *serverOptionConfig) {
 		cfg.pluginHost = host
+	}
+}
+
+// WithUsageStore serves usage history from store on the management API.
+func WithUsageStore(store *usagestore.Store) ServerOption {
+	return func(cfg *serverOptionConfig) {
+		cfg.usageStore = store
 	}
 }
 
