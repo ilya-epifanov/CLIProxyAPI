@@ -171,6 +171,10 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if !s.applyPprofConfigContext(ctx, cfg) {
 		return false
 	}
+	if !s.applyMetricsConfigContext(ctx, cfg) {
+		return false
+	}
+	s.applyUsageStoreConfig(cfg)
 	s.applyDiscoveryConfigContext(ctx, cfg)
 	if errContext := ctx.Err(); errContext != nil {
 		return false

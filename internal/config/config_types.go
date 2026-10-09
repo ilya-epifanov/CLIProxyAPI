@@ -307,6 +307,27 @@ type PprofConfig struct {
 	Addr string `yaml:"addr" json:"addr"`
 }
 
+// MetricsConfig holds Prometheus metrics HTTP server settings.
+type MetricsConfig struct {
+	// Enable toggles the metrics HTTP server.
+	Enable bool `yaml:"enable" json:"enable"`
+	// Addr is the host:port address for the metrics HTTP server.
+	Addr string `yaml:"addr" json:"addr"`
+}
+
+// UsageStoreConfig holds settings for the persistent usage store.
+type UsageStoreConfig struct {
+	// Enable opens the store at start; changing it requires a restart.
+	Enable bool `yaml:"enable" json:"enable"`
+	// Path is the SQLite database file; empty means usage.db in the writable path.
+	// Changing it requires a restart.
+	Path string `yaml:"path" json:"path"`
+	// RetentionDays is how long per-request rows are kept.
+	RetentionDays int `yaml:"retention-days" json:"retention-days"`
+	// RollupRetentionDays is how long hourly totals are kept.
+	RollupRetentionDays int `yaml:"rollup-retention-days" json:"rollup-retention-days"`
+}
+
 // DiscoveryInterfacesConfig specifies interface inclusion and exclusion rules.
 type DiscoveryInterfacesConfig struct {
 	Include []string `yaml:"include" json:"include"`

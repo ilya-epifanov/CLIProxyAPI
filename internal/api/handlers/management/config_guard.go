@@ -85,5 +85,6 @@ func (h *Handler) GetServerCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"config_writable": h.ConfigWritable(),
 		"strategies":      routingStrategies,
+		"usage_store":     h.usageStoreCapability(),
 	})
 }

@@ -76,6 +76,7 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.WebsocketAuth = true
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
+	cfg.setUsageObservabilityDefaults()
 	cfg.Discovery.Enabled = false
 	cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
 	cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
@@ -153,6 +154,10 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	} else if cfg.RedisUsageQueueRetentionSeconds > 3600 {
 		log.WithField("value", cfg.RedisUsageQueueRetentionSeconds).Warn("redis-usage-queue-retention-seconds too large; clamping to 3600")
 		cfg.RedisUsageQueueRetentionSeconds = 3600
+	}
+
+	if errUsage := cfg.normalizeUsageObservability(); errUsage != nil {
+		return nil, errUsage
 	}
 
 	if cfg.MaxRetryCredentials < 0 {
