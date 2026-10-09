@@ -2,6 +2,8 @@ package usage
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -185,4 +187,67 @@ func TestManagerPublishBackfillsContextAuthFields(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for usage record")
 	}
+}
+
+type recordingPlugin struct {
+	mu      sync.Mutex
+	records []Record
+	block   chan struct{}
+}
+
+func (p *recordingPlugin) HandleUsage(_ context.Context, record Record) {
+	if p.block != nil {
+		<-p.block
+	}
+	p.mu.Lock()
+	p.records = append(p.records, record)
+	p.mu.Unlock()
+}
+
+func (p *recordingPlugin) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.records)
+}
+
+func TestManagerStopAndWaitDeliversQueuedRecords(t *testing.T) {
+	m := NewManager(0)
+	plugin := &recordingPlugin{block: make(chan struct{})}
+	m.Register(plugin)
+	for i := 0; i < 5; i++ {
+		m.Publish(context.Background(), Record{Model: "m"})
+	}
+
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- m.StopAndWait(context.Background()) }()
+	close(plugin.block)
+
+	if err := <-waitErr; err != nil {
+		t.Fatalf("StopAndWait() error = %v", err)
+	}
+	if got := plugin.count(); got != 5 {
+		t.Fatalf("delivered records = %d, want 5", got)
+	}
+}
+
+func TestManagerStopAndWaitReturnsWhenContextEnds(t *testing.T) {
+	m := NewManager(0)
+	plugin := &recordingPlugin{block: make(chan struct{})}
+	defer close(plugin.block)
+	m.Register(plugin)
+	m.Publish(context.Background(), Record{Model: "m"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.StopAndWait(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("StopAndWait() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestManagerStopAndWaitWithoutStart(t *testing.T) {
+	m := NewManager(0)
+	if err := m.StopAndWait(context.Background()); err != nil {
+		t.Fatalf("StopAndWait() error = %v", err)
+	}
+	m.Publish(context.Background(), Record{Model: "m"})
 }
