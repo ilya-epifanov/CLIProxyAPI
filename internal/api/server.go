@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/quotaprobe"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
@@ -283,6 +284,16 @@ func (s *Server) Handler() http.Handler {
 		return nil
 	}
 	return s.server.Handler
+}
+
+// NewQuotaProber builds a quota prober that sends its requests with the
+// management API's credentials, proxy and timeout, and serves its results on
+// the management API. The caller runs it.
+func (s *Server) NewQuotaProber(opts quotaprobe.Options) *quotaprobe.Prober {
+	opts.Doer = s.mgmt
+	prober := quotaprobe.New(opts)
+	s.mgmt.SetQuotaProbes(prober)
+	return prober
 }
 
 // Start begins listening for and serving HTTP or HTTPS requests.

@@ -20,13 +20,14 @@ var nonConfigMutations = map[string]struct{}{
 	"POST /v8/management/credentials":            {},
 	"DELETE /v8/management/credentials":          {},
 	// The config API key branch of the status toggle writes the config; PatchAuthFileStatus guards it itself.
-	"PATCH /v8/management/credentials/status": {},
-	"PATCH /v8/management/credentials/fields": {},
-	"POST /v8/management/credentials/refresh": {},
-	"POST /v8/management/oauth/import":        {},
-	"DELETE /v8/management/oauth/session":     {},
-	"POST /v8/management/plugins/:id/quota":   {},
-	"DELETE /v8/management/plugins/:id/quota": {},
+	"PATCH /v8/management/credentials/status":  {},
+	"PATCH /v8/management/credentials/fields":  {},
+	"POST /v8/management/credentials/refresh":  {},
+	"POST /v8/management/oauth/import":         {},
+	"DELETE /v8/management/oauth/session":      {},
+	"POST /v8/management/plugins/:id/quota":    {},
+	"DELETE /v8/management/plugins/:id/quota":  {},
+	"POST /v8/management/quota/probes/refresh": {},
 }
 
 // NonConfigMutationRoutes returns the routes exempt from ConfigWriteGuard as "METHOD /full/path" strings.
@@ -86,5 +87,6 @@ func (h *Handler) GetServerCapabilities(c *gin.Context) {
 		"config_writable": h.ConfigWritable(),
 		"strategies":      routingStrategies,
 		"usage_store":     h.usageStoreCapability(),
+		"quota_cache":     h.currentQuotaProbes() != nil,
 	})
 }

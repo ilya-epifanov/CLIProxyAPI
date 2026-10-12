@@ -62,6 +62,7 @@ type Handler struct {
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
 	usageHistory            UsageHistory
+	quotaProbes             QuotaProbes
 }
 
 type configReloadSnapshot struct {

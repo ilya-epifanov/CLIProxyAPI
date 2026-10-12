@@ -328,6 +328,17 @@ type UsageStoreConfig struct {
 	RollupRetentionDays int `yaml:"rollup-retention-days" json:"rollup-retention-days"`
 }
 
+// QuotaProbeConfig holds settings for server-side quota reads.
+type QuotaProbeConfig struct {
+	// Enable reads quota on the server; changing it requires a restart.
+	Enable bool `yaml:"enable" json:"enable"`
+	// RefreshInterval is how often each account is read on schedule.
+	RefreshInterval time.Duration `yaml:"refresh-interval" json:"refresh-interval"`
+	// MinRefreshInterval is the shortest time between two reads of one account,
+	// including reads the panel requests.
+	MinRefreshInterval time.Duration `yaml:"min-refresh-interval" json:"min-refresh-interval"`
+}
+
 // DiscoveryInterfacesConfig specifies interface inclusion and exclusion rules.
 type DiscoveryInterfacesConfig struct {
 	Include []string `yaml:"include" json:"include"`
