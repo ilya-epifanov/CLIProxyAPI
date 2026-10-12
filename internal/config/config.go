@@ -97,6 +97,9 @@ type Config struct {
 	// Default: 60. Max: 3600.
 	RedisUsageQueueRetentionSeconds int `yaml:"redis-usage-queue-retention-seconds" json:"redis-usage-queue-retention-seconds"`
 
+	// QuotaProbe controls server-side reads of Claude and Codex account quota.
+	QuotaProbe QuotaProbeConfig `yaml:"quota-probe" json:"quota-probe"`
+
 	// DisableCooling disables auth/model cooldown scheduling when true unless a credential or provider overrides it.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
 
