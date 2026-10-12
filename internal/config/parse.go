@@ -38,6 +38,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.Discovery.Enabled = false
 	cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
 	cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
+	cfg.setQuotaProbeDefaults()
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
 	cfg.CredentialInFlight = DefaultCredentialInFlightConfig()
 
@@ -103,6 +104,10 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 
 	if cfg.MaxRetryCredentials < 0 {
 		cfg.MaxRetryCredentials = 0
+	}
+
+	if errQuota := cfg.normalizeQuotaProbe(); errQuota != nil {
+		return nil, errQuota
 	}
 
 	cfg.NormalizePluginsConfig()

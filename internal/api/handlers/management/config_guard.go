@@ -22,16 +22,17 @@ var nonConfigMutations = map[string]struct{}{
 	"POST /v8/management/credentials":                       {},
 	"DELETE /v8/management/credentials":                     {},
 	// The config API key branch of the status toggle writes the config; PatchAuthFileStatus guards it itself.
-	"PATCH /v8/management/credentials/status": {},
-	"PATCH /v8/management/credentials/fields": {},
-	"POST /v8/management/credentials/refresh": {},
-	"POST /v8/management/credentials/verify":  {},
-	"POST /v8/management/oauth/import":        {},
-	"POST /v8/management/oauth/auth-url":      {},
-	"POST /v8/management/oauth/siwc/bind":     {},
-	"DELETE /v8/management/oauth/session":     {},
-	"POST /v8/management/plugins/:id/quota":   {},
-	"DELETE /v8/management/plugins/:id/quota": {},
+	"PATCH /v8/management/credentials/status":  {},
+	"PATCH /v8/management/credentials/fields":  {},
+	"POST /v8/management/credentials/refresh":  {},
+	"POST /v8/management/credentials/verify":   {},
+	"POST /v8/management/oauth/import":         {},
+	"POST /v8/management/oauth/auth-url":       {},
+	"POST /v8/management/oauth/siwc/bind":      {},
+	"DELETE /v8/management/oauth/session":      {},
+	"POST /v8/management/plugins/:id/quota":    {},
+	"DELETE /v8/management/plugins/:id/quota":  {},
+	"POST /v8/management/quota/probes/refresh": {},
 }
 
 // NonConfigMutationRoutes returns the routes exempt from ConfigWriteGuard as "METHOD /full/path" strings.
@@ -90,5 +91,6 @@ func (h *Handler) GetServerCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"config_writable": h.ConfigWritable(),
 		"strategies":      routingStrategies,
+		"quota_cache":     h.currentQuotaProbes() != nil,
 	})
 }
