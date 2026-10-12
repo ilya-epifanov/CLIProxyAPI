@@ -1123,6 +1123,16 @@ observability:
     enable: false
     addr: "127.0.0.1:8316"
 
+  # Server-side reads of Claude and Codex account quota for the management panel. The server
+  # reads every enabled account on one schedule, one account at a time, and the panel shows the
+  # latest result. enable is read at start; changing it requires a restart.
+  quota:
+    enable: false
+    # How often each account is read on schedule.
+    refresh-interval: 15m
+    # Shortest time between two reads of one account, including refreshes the panel requests.
+    min-refresh-interval: 5m
+
   # Prometheus metrics at /metrics (host:port). It exposes credential labels and emails,
   # so keep it bound to localhost.
   metrics:

@@ -78,6 +78,9 @@ type Config struct {
 	// UsageStore controls the persistent SQLite usage store.
 	UsageStore UsageStoreConfig `yaml:"usage-store" json:"usage-store"`
 
+	// QuotaProbe controls server-side reads of Claude and Codex account quota.
+	QuotaProbe QuotaProbeConfig `yaml:"quota-probe" json:"quota-probe"`
+
 	// DisableCooling disables auth/model cooldown scheduling when true unless a credential or provider overrides it.
 	DisableCooling bool `yaml:"disable-cooling" json:"disable-cooling"`
 

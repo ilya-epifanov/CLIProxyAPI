@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/homeplugins"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
@@ -82,6 +83,9 @@ type Service struct {
 
 	// usageStorePath is the database file usageStore was opened with.
 	usageStorePath string
+
+	// quotaProbeConfig is the quota probe setting the service started with.
+	quotaProbeConfig internalconfig.QuotaProbeConfig
 
 	// discoveryManager manages local network mDNS / DNS-SD service advertising.
 	discoveryManager *discoveryAdvertiserManager
