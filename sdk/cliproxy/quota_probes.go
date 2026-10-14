@@ -23,7 +23,11 @@ func (s *Service) startQuotaProbes(ctx context.Context) {
 		RefreshInterval: s.quotaProbeConfig.RefreshInterval,
 		MinInterval:     s.quotaProbeConfig.MinRefreshInterval,
 		Spacing:         quotaprobe.DefaultSpacing,
+		Cache:           s.quotaCache,
 	})
+	if s.quotaCache != nil {
+		s.quotaCache.SetRefreshRequester(prober.RequestRefresh)
+	}
 	go prober.Run(ctx)
 	log.Infof("quota probes started (every %s, at most every %s per account)",
 		s.quotaProbeConfig.RefreshInterval, s.quotaProbeConfig.MinRefreshInterval)

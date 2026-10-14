@@ -142,7 +142,17 @@ access:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, pace
+  # pace sends each new session to the Claude or Codex account furthest behind schedule on its
+  # weekly quota: remaining fraction / fraction of the week left, the lowest over the weekly
+  # windows of the model the account will serve (Claude adds the Fable 7-day window for Fable
+  # models). Accounts whose 5-hour window is below burst-reserve go after the others. Quota comes
+  # from response headers and, with observability.quota.enable, from server-side quota reads
+  # (needed for the Fable window). Use it with session-affinity, so sessions keep their prompt cache.
+  # pace:
+  #   burst-reserve: 0.2   # 5-hour remaining fraction below which an account goes last; 0 disables
+  #   pace-tolerance: 0.1  # new sessions pick at random among accounts within 10 % of the best pace
+  #   stale-after: 15m     # quota data older than this is marked stale in GET /routing/ranking
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.

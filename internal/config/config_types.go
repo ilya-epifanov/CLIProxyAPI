@@ -405,8 +405,11 @@ type QuotaExceeded struct {
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
+	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first", "pace".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// Pace tunes the "pace" strategy. Other strategies ignore it.
+	Pace PaceRoutingConfig `yaml:"pace,omitempty" json:"pace,omitempty"`
 
 	// SessionAffinity enables universal session-sticky routing for all clients.
 	// Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,

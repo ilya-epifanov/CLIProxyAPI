@@ -306,7 +306,7 @@ func (h *Handler) PutForceModelPrefix(c *gin.Context) {
 }
 
 // routingStrategies lists the canonical names that normalizeRoutingStrategy returns.
-var routingStrategies = []string{"round-robin", "weighted-round-robin", "fill-first"}
+var routingStrategies = []string{"round-robin", "weighted-round-robin", "fill-first", "pace"}
 
 func normalizeRoutingStrategy(strategy string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(strategy))
@@ -317,6 +317,8 @@ func normalizeRoutingStrategy(strategy string) (string, bool) {
 		return "weighted-round-robin", true
 	case "fill-first", "fillfirst", "ff":
 		return "fill-first", true
+	case "pace":
+		return "pace", true
 	default:
 		return "", false
 	}
