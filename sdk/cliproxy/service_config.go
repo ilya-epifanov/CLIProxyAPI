@@ -57,6 +57,11 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 			BurstReserve:  cfg.Routing.Pace.BurstReserveOrDefault(),
 			PaceTolerance: cfg.Routing.Pace.PaceToleranceOrDefault(),
 			StaleAfter:    cfg.Routing.Pace.StaleAfterOrDefault(),
+			Throttle: coreauth.ThrottleConfig{
+				Threshold: cfg.Routing.Pace.Throttle.ThresholdOrDefault(),
+				Floor:     cfg.Routing.Pace.Throttle.FloorOrDefault(),
+				MaxDelay:  cfg.Routing.Pace.Throttle.MaxDelay,
+			},
 		}
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
@@ -136,6 +141,9 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	if errValidate := newCfg.Routing.Pace.Validate(); errValidate != nil {
 		log.WithError(errValidate).Warn("rejected config update with invalid pace routing settings")
 		return configCommit{}
+	}
+	if warning := newCfg.Routing.Pace.Throttle.Warning(); warning != "" {
+		log.Warn(warning)
 	}
 
 	if errValidate := newCfg.Models.Validate(); errValidate != nil {

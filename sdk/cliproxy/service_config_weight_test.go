@@ -1,6 +1,8 @@
 package cliproxy
 
 import (
+	"time"
+
 	"context"
 	"testing"
 
@@ -82,7 +84,12 @@ func TestPaceRoutingSelector(t *testing.T) {
 	state := normalizedRoutingRuntimeState(&internalconfig.Config{
 		Routing: internalconfig.RoutingConfig{Strategy: " Pace ", Pace: internalconfig.PaceRoutingConfig{PaceTolerance: &tolerance}},
 	})
-	want := coreauth.PaceConfig{BurstReserve: internalconfig.DefaultPaceBurstReserve, PaceTolerance: 0.3, StaleAfter: internalconfig.DefaultPaceStaleAfter}
+	want := coreauth.PaceConfig{
+		BurstReserve:  internalconfig.DefaultPaceBurstReserve,
+		PaceTolerance: 0.3,
+		StaleAfter:    internalconfig.DefaultPaceStaleAfter,
+		Throttle:      coreauth.ThrottleConfig{Threshold: internalconfig.DefaultThrottleThreshold, Floor: internalconfig.DefaultThrottleFloor},
+	}
 	if state.strategy != "pace" || state.pace != want {
 		t.Fatalf("state = %+v, want pace with %+v", state, want)
 	}
@@ -93,6 +100,11 @@ func TestPaceRoutingSelector(t *testing.T) {
 	other.pace.PaceTolerance = 0.2
 	if state == other {
 		t.Fatal("routing states with different pace settings must differ")
+	}
+	throttled := state
+	throttled.pace.Throttle.MaxDelay = 2 * time.Minute
+	if state == throttled {
+		t.Fatal("routing states with different throttle settings must differ, so a reload applies them")
 	}
 }
 

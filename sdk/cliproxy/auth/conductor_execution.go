@@ -136,6 +136,9 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 	var lastErr error
 	var preferredUpstreamErr error
 	retryModel := authSelectionModelFromOptions(opts, req.Model)
+	if errThrottle := m.throttle(ctx, normalized, retryModel); errThrottle != nil {
+		return cliproxyexecutor.Response{}, errThrottle
+	}
 	for attempt := 0; ; attempt++ {
 		roundAttempted := make(map[string]struct{})
 		roundOpts := withAttemptedAuthTracker(opts, roundAttempted)
@@ -251,6 +254,11 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 	var preferredUpstreamErr error
 	homeRetryLimit := -1
 	retryModel := authSelectionModelFromOptions(opts, req.Model)
+	if !m.HomeEnabled() {
+		if errThrottle := m.throttle(ctx, normalized, retryModel); errThrottle != nil {
+			return nil, errThrottle
+		}
+	}
 	attempt := 0
 	retryRoundPending := false
 	retryRoundWaited := false

@@ -915,6 +915,10 @@ type SessionAffinitySelector struct {
 	matcher           *cliproxysession.MerklePrefixMatcher
 	subagentAffinity  bool
 	rebindOnQuotaOnly bool
+	// freeMoves is the fallback when it ranks (the pace strategy): a bound session then
+	// goes back to it once its prompt cache is gone (session_free_move.go). nil otherwise.
+	freeMoves Ranker
+	contexts  *sessionContextTracker
 }
 
 const (
@@ -1069,13 +1073,18 @@ func NewSessionAffinitySelectorWithConfig(cfg SessionAffinityConfig) *SessionAff
 		subagentAffinity = *cfg.SubagentAffinity
 	}
 	rebindOnQuotaOnly := normalizeSessionAffinityRebindOn(cfg.RebindOn) == SessionAffinityRebindOnQuota
-	return &SessionAffinitySelector{
+	selector := &SessionAffinitySelector{
 		fallback:          cfg.Fallback,
 		cache:             NewSessionCache(cfg.TTL),
 		matcher:           cliproxysession.NewMerklePrefixMatcher(cfg.TTL),
 		subagentAffinity:  subagentAffinity,
 		rebindOnQuotaOnly: rebindOnQuotaOnly,
 	}
+	if ranker, ok := cfg.Fallback.(Ranker); ok {
+		selector.freeMoves = ranker
+		selector.contexts = newSessionContextTracker(cfg.TTL)
+	}
+	return selector
 }
 
 // Trees returns a backward-compatible in-memory session tree store.
@@ -1182,10 +1191,25 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 			s.cache.Set(cacheKey, authID)
 		}
 	}
+	freeMove := ""
+	if s.freeMoves != nil {
+		next := sessionContextOf(provider, opts, now)
+		if prev, seen := s.contexts.swap(cacheKey, next); seen {
+			freeMove = freeMoveReason(prev, next)
+		}
+	}
 
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
 			if auth.ID == cachedAuthID {
+				if freeMove != "" {
+					placed, errPlace := s.placeAtFreePoint(ctx, provider, model, opts, auth, fallbackAuths, now)
+					if errPlace == nil && placed != nil && placed.ID != auth.ID {
+						bind(placed.ID)
+						entry.Infof("session-affinity: %s, moved to a better-paced account | session=%s from=%s to=%s provider=%s model=%s", freeMove, truncateSessionID(primaryID), auth.ID, placed.ID, provider, model)
+						return placed, nil
+					}
+				}
 				bind(auth.ID)
 				entry.Infof("session-affinity: cache hit | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 				return auth, nil

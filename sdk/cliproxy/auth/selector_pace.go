@@ -51,6 +51,8 @@ type PaceConfig struct {
 	PaceTolerance float64
 	// StaleAfter marks a ranking entry stale when its oldest window observation is older.
 	StaleAfter time.Duration
+	// Throttle slows requests down while the pool spends quota ahead of schedule.
+	Throttle ThrottleConfig
 }
 
 // minTimeLeft keeps R/T finite just before a reset.
@@ -187,34 +189,21 @@ func (s *PaceSelector) Rank(ctx context.Context, auths []*Auth, model string, no
 // model the account will serve after its alias, not the route model.
 func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time) Ranked {
 	r := Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN()}
-	windows, tracked := quota.RoutingWindowsFor(auth.Provider, canonicalModelKey(selectionModel))
-	if !tracked {
-		return r
-	}
-	// auth is a candidate clone, so reading its signals here is safe.
-	snapshot, ok := s.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
+	windows, ok := s.windowsOf(auth, selectionModel)
 	if !ok {
 		return r
 	}
-	short, hasShort := snapshot.Window(windows.Short)
-	long := make([]quota.Window, 0, len(windows.Long))
-	for _, slot := range windows.Long {
-		if w, found := snapshot.First(slot...); found {
-			long = append(long, w)
-			r.LongWindows = append(r.LongWindows, w.ID)
-		}
+	short, hasShort, long := windows.short, windows.hasShort, windows.long
+	for _, w := range long {
+		r.LongWindows = append(r.LongWindows, w.ID)
 	}
-	candidates := long
-	if hasShort {
-		candidates = append([]quota.Window{short}, long...)
-	}
-	for _, w := range candidates {
+	for _, w := range windows.all() {
 		if exhausted(w, now) {
 			r.Class, r.ExhaustedWindow, r.BackAt = ClassExhausted, w.ID, w.ResetAt
 			return r
 		}
 	}
-	if len(long) < len(windows.Long) {
+	if !windows.complete {
 		return r
 	}
 	r.Pace = math.Inf(1)
@@ -240,21 +229,69 @@ func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time
 	return r
 }
 
+// accountWindows are the observed routing windows of one account's selection model.
+type accountWindows struct {
+	short    quota.Window
+	hasShort bool
+	// long holds the first observed window of each long slot, in slot order.
+	long []quota.Window
+	// complete is false when a long slot has no observation.
+	complete bool
+}
+
+// all returns the short window, when observed, followed by the long ones.
+func (w accountWindows) all() []quota.Window {
+	if !w.hasShort {
+		return w.long
+	}
+	return append([]quota.Window{w.short}, w.long...)
+}
+
+// windowsOf looks up auth's routing windows for its selection model. ok is false when the
+// provider has no quota windows or none was observed.
+func (s *PaceSelector) windowsOf(auth *Auth, selectionModel string) (accountWindows, bool) {
+	routing, tracked := quota.RoutingWindowsFor(auth.Provider, canonicalModelKey(selectionModel))
+	if !tracked {
+		return accountWindows{}, false
+	}
+	// auth is a candidate clone, so reading its signals here is safe.
+	snapshot, ok := s.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
+	if !ok {
+		return accountWindows{}, false
+	}
+	out := accountWindows{long: make([]quota.Window, 0, len(routing.Long))}
+	out.short, out.hasShort = snapshot.Window(routing.Short)
+	for _, slot := range routing.Long {
+		if w, found := snapshot.First(slot...); found {
+			out.long = append(out.long, w)
+		}
+	}
+	out.complete = len(out.long) == len(routing.Long)
+	return out, true
+}
+
 // exhausted reports a window at 0 % whose reset is pending or unknown.
 func exhausted(w quota.Window, now time.Time) bool {
 	return w.Remaining <= 0 && (w.ResetAt.IsZero() || w.ResetAt.After(now))
 }
 
-// pace returns R/T for one long window that is not exhausted.
+// pace returns R/T for one window that is not exhausted.
 func pace(w quota.Window, now time.Time) (p float64, estimated bool) {
+	remaining, timeLeft := windowShare(w, now)
+	return remaining / timeLeft, !w.ResetAt.IsZero() && !w.ResetAt.After(now)
+}
+
+// windowShare returns a window's remaining fraction R and the fraction T of its length
+// left before the reset, both in 0..1 with T > 0.
+func windowShare(w quota.Window, now time.Time) (remaining, timeLeft float64) {
 	switch {
 	case w.ResetAt.IsZero(): // no reset pending: the window's clock starts on use, T = 1
-		return w.Remaining, false
+		return w.Remaining, 1
 	case !w.ResetAt.After(now): // reset passed: refilled since the last observation
-		return 1, true
+		return 1, 1
 	}
 	t := float64(max(w.ResetAt.Sub(now), minTimeLeft)) / float64(w.Length)
-	return w.Remaining / min(t, 1), false
+	return w.Remaining, min(t, 1)
 }
 
 func markTopBand(ranked []Ranked, tolerance float64) {

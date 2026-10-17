@@ -16,6 +16,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	log "github.com/sirupsen/logrus"
 )
 
 // Builder constructs a Service instance with customizable providers.
@@ -209,6 +210,9 @@ func (b *Builder) Build() (*Service, error) {
 	}
 	if errValidate := b.cfg.Routing.Pace.Validate(); errValidate != nil {
 		return nil, fmt.Errorf("cliproxy: %w", errValidate)
+	}
+	if warning := b.cfg.Routing.Pace.Throttle.Warning(); warning != "" {
+		log.Warn(warning)
 	}
 	b.cfg.NormalizePluginsConfig()
 	if errResolvePluginsDir := b.cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && b.cfg.Plugins.Enabled {

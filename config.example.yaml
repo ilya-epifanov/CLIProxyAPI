@@ -153,6 +153,20 @@ routing:
   #   burst-reserve: 0.2   # 5-hour remaining fraction below which an account goes last; 0 disables
   #   pace-tolerance: 0.1  # new sessions pick at random among accounts within 10 % of the best pace
   #   stale-after: 15m     # quota data older than this is marked stale in GET /routing/ranking
+  #   # throttle slows every request down while the pool spends quota ahead of schedule, so a busy
+  #   # pool runs out of a window at its reset instead of before it (when it runs out, every client
+  #   # gets 429s at once). Pool pace = remaining summed over the usable accounts / time left summed
+  #   # over them, the lowest over the model's windows, 5-hour included. Each request waits
+  #   # max-delay x (threshold - pace) / (threshold - floor), capped at max-delay.
+  #   throttle:
+  #     threshold: 0.8     # pool pace below which requests wait; 0.8 = a 20 % burst, then on schedule
+  #     floor: 0.05        # pool pace at which requests wait max-delay
+  #     max-delay: 0s      # 0 (default) turns it off. Keep it well under the 300 s that Claude Code,
+  #                        # Codex and pi wait for a response, and under Claude's 5-minute prompt cache;
+  #                        # 120s is a good value. 240s or more logs a warning.
+  # With session-affinity, a bound session keeps its account while its prompt cache is warm. Once
+  # the cache is gone (the first turn changed, as after compaction, or a Claude session was idle
+  # longer than its prompt cache lives), the session moves unless its account is in the top band.
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.

@@ -155,17 +155,19 @@ type Manager struct {
 	executors                 map[string]ProviderExecutor
 	selector                  Selector
 	hook                      Hook
-	resultPolicy              atomic.Pointer[resultPolicyHolder]
-	mu                        sync.RWMutex
-	selectorMu                sync.Mutex
-	configCooldownMu          sync.Mutex
-	syncSchedulerMu           sync.Mutex
-	structuralEpoch           atomic.Uint64
-	syncedVersion             atomic.Uint64
-	auths                     map[string]*Auth
-	authEpochs                map[string]uint64
-	authChangeWatchers        map[string]map[chan struct{}]struct{}
-	scheduler                 *authScheduler
+	// throttleWait waits out a pace throttle delay; nil uses the wall clock (tests replace it).
+	throttleWait       func(ctx context.Context, d time.Duration) error
+	resultPolicy       atomic.Pointer[resultPolicyHolder]
+	mu                 sync.RWMutex
+	selectorMu         sync.Mutex
+	configCooldownMu   sync.Mutex
+	syncSchedulerMu    sync.Mutex
+	structuralEpoch    atomic.Uint64
+	syncedVersion      atomic.Uint64
+	auths              map[string]*Auth
+	authEpochs         map[string]uint64
+	authChangeWatchers map[string]map[chan struct{}]struct{}
+	scheduler          *authScheduler
 	// pluginScheduler runs outside m.mu before falling back to native selection.
 	pluginScheduler PluginScheduler
 	// homeRuntimeAuths retains legacy session auth lookups for non-execution callers.
