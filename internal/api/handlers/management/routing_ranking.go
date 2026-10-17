@@ -48,6 +48,25 @@ type rankingPoolJSON struct {
 	LongWindows   []quota.WindowID   `json:"long_windows"`
 	Entries       []rankingEntryJSON `json:"entries"`
 	NotCandidates []notCandidateJSON `json:"not_candidates"`
+	// PoolPace is null unless the strategy is pace.
+	PoolPace *poolPaceJSON `json:"pool_pace"`
+	// Throttle is null unless the pace strategy throttles requests.
+	Throttle *throttleJSON `json:"throttle"`
+}
+
+type poolPaceJSON struct {
+	// Pace and Window are null when no candidate has quota data.
+	Pace     *float64        `json:"pace"`
+	Window   *quota.WindowID `json:"window"`
+	Accounts int             `json:"accounts"`
+}
+
+type throttleJSON struct {
+	// DelayMS is the delay a request for this pool gets now.
+	DelayMS    int64   `json:"delay_ms"`
+	Threshold  float64 `json:"threshold"`
+	Floor      float64 `json:"floor"`
+	MaxDelayMS int64   `json:"max_delay_ms"`
 }
 
 // GetRoutingRanking returns how the current selector would order each provider's
@@ -79,6 +98,21 @@ func (h *Handler) GetRoutingRanking(c *gin.Context) {
 		}
 		if model != "" {
 			pool.Model = &model
+		}
+		if ranking.Pool != nil {
+			pool.PoolPace = &poolPaceJSON{Pace: floatPtr(ranking.Pool.Pace), Accounts: ranking.Pool.Accounts}
+			if pool.PoolPace.Pace != nil {
+				window := ranking.Pool.Window
+				pool.PoolPace.Window = &window
+			}
+		}
+		if ranking.Throttle != nil {
+			pool.Throttle = &throttleJSON{
+				DelayMS:    ranking.Throttle.Delay.Milliseconds(),
+				Threshold:  ranking.Throttle.Config.Threshold,
+				Floor:      ranking.Throttle.Config.Floor,
+				MaxDelayMS: ranking.Throttle.Config.MaxDelay.Milliseconds(),
+			}
 		}
 		seen := map[quota.WindowID]bool{}
 		for i, entry := range ranking.Entries {

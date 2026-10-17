@@ -7,10 +7,15 @@ import (
 
 // Defaults of the "pace" routing strategy.
 const (
-	DefaultPaceBurstReserve = 0.2
-	DefaultPaceTolerance    = 0.1
-	DefaultPaceStaleAfter   = 15 * time.Minute
-	routingPaceConfigPrefix = "routing.pace."
+	DefaultPaceBurstReserve  = 0.2
+	DefaultPaceTolerance     = 0.1
+	DefaultPaceStaleAfter    = 15 * time.Minute
+	DefaultThrottleThreshold = 0.8
+	DefaultThrottleFloor     = 0.05
+	routingPaceConfigPrefix  = "routing.pace."
+	// throttleWarnDelay is where a throttle delay nears the 300 s that Claude Code,
+	// Codex and pi wait for a response before they give up.
+	throttleWarnDelay = 240 * time.Second
 )
 
 // PaceRoutingConfig tunes the "pace" strategy, which sends new sessions to the account
@@ -25,6 +30,21 @@ type PaceRoutingConfig struct {
 	PaceTolerance *float64 `yaml:"pace-tolerance,omitempty" json:"pace-tolerance,omitempty"`
 	// StaleAfter marks quota observations older than this as stale in the ranking.
 	StaleAfter time.Duration `yaml:"stale-after,omitempty" json:"stale-after,omitempty"`
+	// Throttle slows every request down while the pool spends quota ahead of schedule.
+	Throttle PaceThrottleConfig `yaml:"throttle,omitempty" json:"throttle,omitempty"`
+}
+
+// PaceThrottleConfig slows requests down while the pool's pace (remaining quota over
+// time left, summed over the usable accounts, lowest over the model's windows) is below
+// Threshold: each request waits MaxDelay × (Threshold − pace) / (Threshold − Floor),
+// capped at MaxDelay. A MaxDelay of 0 turns it off.
+type PaceThrottleConfig struct {
+	// Threshold is the pool pace below which requests are delayed; (Floor, 1].
+	Threshold *float64 `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+	// Floor is the pool pace at and below which requests wait MaxDelay; [0, Threshold).
+	Floor *float64 `yaml:"floor,omitempty" json:"floor,omitempty"`
+	// MaxDelay is the longest wait added to one request. 0 (default) turns throttling off.
+	MaxDelay time.Duration `yaml:"max-delay,omitempty" json:"max-delay,omitempty"`
 }
 
 // Validate rejects values outside their ranges.
@@ -38,7 +58,46 @@ func (p PaceRoutingConfig) Validate() error {
 	if p.StaleAfter < 0 {
 		return fmt.Errorf("%sstale-after must not be negative, got %s", routingPaceConfigPrefix, p.StaleAfter)
 	}
+	return p.Throttle.validate()
+}
+
+func (t PaceThrottleConfig) validate() error {
+	const prefix = routingPaceConfigPrefix + "throttle."
+	threshold, floor := t.ThresholdOrDefault(), t.FloorOrDefault()
+	if threshold <= 0 || threshold > 1 {
+		return fmt.Errorf("%sthreshold must be in (0, 1], got %v", prefix, threshold)
+	}
+	if floor < 0 || floor >= threshold {
+		return fmt.Errorf("%sfloor must be in [0, threshold %v), got %v", prefix, threshold, floor)
+	}
+	if t.MaxDelay < 0 {
+		return fmt.Errorf("%smax-delay must not be negative, got %s", prefix, t.MaxDelay)
+	}
 	return nil
+}
+
+// Warning describes a valid but risky setting, or returns "".
+func (t PaceThrottleConfig) Warning() string {
+	if t.MaxDelay >= throttleWarnDelay {
+		return fmt.Sprintf("%sthrottle.max-delay %s is close to the 300 s that Claude Code, Codex and pi wait for a response; delayed requests may time out", routingPaceConfigPrefix, t.MaxDelay)
+	}
+	return ""
+}
+
+// ThresholdOrDefault returns Threshold or its default.
+func (t PaceThrottleConfig) ThresholdOrDefault() float64 {
+	if t.Threshold == nil {
+		return DefaultThrottleThreshold
+	}
+	return *t.Threshold
+}
+
+// FloorOrDefault returns Floor or its default.
+func (t PaceThrottleConfig) FloorOrDefault() float64 {
+	if t.Floor == nil {
+		return DefaultThrottleFloor
+	}
+	return *t.Floor
 }
 
 // BurstReserveOrDefault returns BurstReserve or its default.

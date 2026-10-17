@@ -50,3 +50,58 @@ func TestPaceRoutingConfigRejectsOutOfRange(t *testing.T) {
 		})
 	}
 }
+
+func TestPaceThrottleConfigLoadsAndDefaultsOff(t *testing.T) {
+	cfg, err := ParseConfigBytes([]byte(`config-version: 8
+routing:
+  strategy: pace
+  pace:
+    throttle:
+      threshold: 0.7
+      floor: 0.1
+      max-delay: 90s
+`))
+	if err != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", err)
+	}
+	throttle := cfg.Routing.Pace.Throttle
+	if throttle.ThresholdOrDefault() != 0.7 || throttle.FloorOrDefault() != 0.1 || throttle.MaxDelay != 90*time.Second {
+		t.Fatalf("throttle = %+v", throttle)
+	}
+
+	defaults, err := ParseConfigBytes([]byte("config-version: 8\nrouting:\n  strategy: pace\n"))
+	if err != nil {
+		t.Fatalf("ParseConfigBytes() error = %v", err)
+	}
+	off := defaults.Routing.Pace.Throttle
+	if off.MaxDelay != 0 || off.ThresholdOrDefault() != DefaultThrottleThreshold || off.FloorOrDefault() != DefaultThrottleFloor {
+		t.Fatalf("default throttle = %+v", off)
+	}
+}
+
+func TestPaceThrottleConfigRejectsOutOfRange(t *testing.T) {
+	for _, tc := range []struct{ yaml, field string }{
+		{"threshold: 0", "threshold"},
+		{"threshold: 1.2", "threshold"},
+		{"floor: -0.1", "floor"},
+		{"floor: 0.8", "floor"},
+		{"threshold: 0.5\n      floor: 0.6", "floor"},
+		{"max-delay: -1s", "max-delay"},
+	} {
+		t.Run(tc.yaml, func(t *testing.T) {
+			_, err := ParseConfigBytes([]byte("config-version: 8\nrouting:\n  pace:\n    throttle:\n      " + tc.yaml + "\n"))
+			if err == nil || !strings.Contains(err.Error(), "routing.pace.throttle."+tc.field) {
+				t.Fatalf("error = %v, want one naming routing.pace.throttle.%s", err, tc.field)
+			}
+		})
+	}
+}
+
+func TestPaceThrottleConfigWarnsNearClientTimeouts(t *testing.T) {
+	if warning := (PaceThrottleConfig{MaxDelay: 120 * time.Second}).Warning(); warning != "" {
+		t.Fatalf("120s warned: %q", warning)
+	}
+	if warning := (PaceThrottleConfig{MaxDelay: 240 * time.Second}).Warning(); !strings.Contains(warning, "max-delay") {
+		t.Fatalf("240s warning = %q", warning)
+	}
+}
