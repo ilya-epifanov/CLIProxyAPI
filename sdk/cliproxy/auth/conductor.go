@@ -199,11 +199,13 @@ type Manager struct {
 	executorRevisions         map[string]uint64
 	selector                  Selector
 	hook                      Hook
-	resultPolicy              atomic.Pointer[resultPolicyHolder]
-	mu                        sync.RWMutex
-	selectorMu                sync.Mutex
-	configCooldownMu          sync.Mutex
-	syncSchedulerMu           sync.Mutex
+	// throttleWait waits out a pace throttle delay; nil uses the wall clock (tests replace it).
+	throttleWait     func(ctx context.Context, d time.Duration) error
+	resultPolicy     atomic.Pointer[resultPolicyHolder]
+	mu               sync.RWMutex
+	selectorMu       sync.Mutex
+	configCooldownMu sync.Mutex
+	syncSchedulerMu  sync.Mutex
 	// executionSeq stamps upstream dispatches with a monotonic sequence used
 	// to reject cooldown clears from executions dispatched before the cooldown.
 	executionSeq       atomic.Uint64
