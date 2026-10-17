@@ -64,6 +64,12 @@ type Entry struct {
 	Responses map[string]Response `json:"responses"`
 }
 
+// CooldownReleaser clears a quota cooldown that a read shows is over;
+// *coreauth.Manager implements it.
+type CooldownReleaser interface {
+	ReleaseRecoveredQuotaCooldown(ctx context.Context, authID string, windows []quota.Window, sentAt time.Time) (bool, error)
+}
+
 // Options configures New.
 type Options struct {
 	Doer  Doer
@@ -78,6 +84,9 @@ type Options struct {
 	Now     func() time.Time
 	// Cache receives the windows parsed from each successful probe; optional.
 	Cache *quota.Cache
+	// Cooldowns receives the same windows, so a reset made outside the proxy
+	// ends the account's quota cooldown; optional.
+	Cooldowns CooldownReleaser
 }
 
 // Prober probes accounts one at a time from a single queue.
@@ -90,6 +99,7 @@ type Prober struct {
 	now             func() time.Time
 	wake            chan struct{}
 	cache           *quota.Cache
+	cooldowns       CooldownReleaser
 	// requests carries auth IDs from RequestRefresh to Run.
 	requests chan string
 
@@ -118,6 +128,7 @@ func New(opts Options) *Prober {
 		now:             now,
 		wake:            make(chan struct{}, 1),
 		cache:           opts.Cache,
+		cooldowns:       opts.Cooldowns,
 		requests:        make(chan string, refreshRequests),
 		entries:         map[string]*Entry{},
 		authIDs:         map[string]string{},
@@ -361,6 +372,7 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 
 	responses := map[string]Response{}
 	var failure *Failure
+	sentAt := p.now()
 	if len(plan) == 0 {
 		failure = &Failure{Message: "credential not found or not probed"}
 	}
@@ -383,8 +395,8 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 	}
 
 	now := p.now()
-	if failure == nil && p.cache != nil {
-		p.storeWindows(auth, responses[plan[0].Name], now)
+	if failure == nil {
+		p.storeWindows(ctx, auth, responses[plan[0].Name], sentAt, now)
 	}
 	p.mu.Lock()
 	if auth != nil {
@@ -413,15 +425,26 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 	}
 }
 
-// storeWindows parses the primary response into the cache. A body the parser rejects
-// keeps the previous windows, which then age into stale.
-func (p *Prober) storeWindows(auth *coreauth.Auth, response Response, observedAt time.Time) {
+// storeWindows parses the primary response into the cache and lets the cooldown
+// releaser end a quota cooldown it shows is over. A body the parser rejects keeps
+// the previous windows, which then age into stale.
+func (p *Prober) storeWindows(ctx context.Context, auth *coreauth.Auth, response Response, sentAt, observedAt time.Time) {
+	if p.cache == nil && p.cooldowns == nil {
+		return
+	}
 	windows, err := quota.ParseProbe(auth.Provider, []byte(response.Body), observedAt)
 	if err != nil {
 		log.WithError(err).WithField("auth_id", auth.ID).Warn("quota probe: cannot parse usage response")
 		return
 	}
-	p.cache.PutProbe(auth.ID, windows)
+	if p.cache != nil {
+		p.cache.PutProbe(auth.ID, windows)
+	}
+	if p.cooldowns != nil {
+		if _, errRelease := p.cooldowns.ReleaseRecoveredQuotaCooldown(ctx, auth.ID, windows, sentAt); errRelease != nil {
+			log.WithError(errRelease).WithField("auth_id", auth.ID).Warn("quota probe: cannot clear recovered cooldown")
+		}
+	}
 }
 
 func truncate(s string, n int) string {
