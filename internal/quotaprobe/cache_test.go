@@ -1,6 +1,7 @@
 package quotaprobe
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -35,6 +36,50 @@ func TestProbeStoresParsedWindowsByAuthID(t *testing.T) {
 	}
 	if _, ok := cache.Lookup("claude-a1.json", "claude", nil, time.Time{}); !ok {
 		t.Fatal("unparsable response dropped the cached windows")
+	}
+}
+
+type releaseCall struct {
+	authID  string
+	windows []quota.Window
+	sentAt  time.Time
+}
+
+type fakeReleaser struct{ calls []releaseCall }
+
+func (f *fakeReleaser) ReleaseRecoveredQuotaCooldown(_ context.Context, authID string, windows []quota.Window, sentAt time.Time) (bool, error) {
+	f.calls = append(f.calls, releaseCall{authID: authID, windows: windows, sentAt: sentAt})
+	return true, nil
+}
+
+func TestProbeHandsTheParsedWindowsAndSendTimeToTheCooldownReleaser(t *testing.T) {
+	doer := &fakeDoer{responses: map[string]Response{"usage": {StatusCode: http.StatusOK, Body: claudeUsageBody}}}
+	auth := claudeAuth("a1")
+	auth.ID = "claude-a1.json"
+	releaser := &fakeReleaser{}
+	p, c := newTestProber(doer, auth)
+	p.cooldowns = releaser
+	sentAt := c.Now()
+
+	drain(p)
+	if len(releaser.calls) != 1 {
+		t.Fatalf("releaser calls = %d; want 1", len(releaser.calls))
+	}
+	call := releaser.calls[0]
+	if call.authID != "claude-a1.json" || !call.sentAt.Equal(sentAt) || len(call.windows) != 2 {
+		t.Fatalf("release call = %+v", call)
+	}
+
+	// A failed or unparsable read is no evidence, so it releases nothing.
+	for _, response := range []Response{
+		{StatusCode: http.StatusOK, Body: "not json"},
+		{StatusCode: http.StatusTooManyRequests, Body: "{}"},
+	} {
+		doer.responses["usage"] = response
+		p.probe(t.Context(), "a1")
+	}
+	if len(releaser.calls) != 1 {
+		t.Fatalf("releaser calls = %d after failed reads; want 1", len(releaser.calls))
 	}
 }
 
