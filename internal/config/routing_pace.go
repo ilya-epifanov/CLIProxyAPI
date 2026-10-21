@@ -7,12 +7,12 @@ import (
 
 // Defaults of the "pace" routing strategy.
 const (
-	DefaultPaceBurstReserve  = 0.2
-	DefaultPaceTolerance     = 0.1
-	DefaultPaceStaleAfter    = 15 * time.Minute
-	DefaultThrottleThreshold = 0.8
-	DefaultThrottleFloor     = 0.05
-	routingPaceConfigPrefix  = "routing.pace."
+	DefaultPaceBurstReserve = 0.2
+	DefaultPaceTolerance    = 0.1
+	DefaultPaceStaleAfter   = 15 * time.Minute
+	DefaultThrottleMargin   = 0.15
+	DefaultThrottleReserve  = 2 * time.Hour
+	routingPaceConfigPrefix = "routing.pace."
 	// throttleWarnDelay is where a throttle delay nears the 300 s that Claude Code,
 	// Codex and pi wait for a response before they give up.
 	throttleWarnDelay = 240 * time.Second
@@ -30,21 +30,23 @@ type PaceRoutingConfig struct {
 	PaceTolerance *float64 `yaml:"pace-tolerance,omitempty" json:"pace-tolerance,omitempty"`
 	// StaleAfter marks quota observations older than this as stale in the ranking.
 	StaleAfter time.Duration `yaml:"stale-after,omitempty" json:"stale-after,omitempty"`
-	// Throttle slows every request down while the pool spends quota ahead of schedule.
+	// Throttle slows requests down so the pool does not run dry.
 	Throttle PaceThrottleConfig `yaml:"throttle,omitempty" json:"throttle,omitempty"`
 }
 
-// PaceThrottleConfig slows requests down while the pool's pace (remaining quota over
-// time left, summed over the usable accounts, lowest over the model's windows) is below
-// Threshold: each request waits MaxDelay × (Threshold − pace) / (Threshold − Floor),
-// capped at MaxDelay. A MaxDelay of 0 turns it off.
+// PaceThrottleConfig slows requests down only as much as keeps the pool from running
+// dry over the next week at the forecast demand (docs/frontend-design.md §4.7). A
+// MaxDelay of 0 turns it off.
 type PaceThrottleConfig struct {
-	// Threshold is the pool pace below which requests are delayed; (Floor, 1].
-	Threshold *float64 `yaml:"threshold,omitempty" json:"threshold,omitempty"`
-	// Floor is the pool pace at and below which requests wait MaxDelay; [0, Threshold).
-	Floor *float64 `yaml:"floor,omitempty" json:"floor,omitempty"`
 	// MaxDelay is the longest wait added to one request. 0 (default) turns throttling off.
 	MaxDelay time.Duration `yaml:"max-delay,omitempty" json:"max-delay,omitempty"`
+	// Margin inflates the forecast demand, for error in the forecast and the quota
+	// sizes; [0, 1].
+	Margin *float64 `yaml:"margin,omitempty" json:"margin,omitempty"`
+	// Reserve: while the accounts that can serve now hold less than this long of the
+	// last hour's demand, every request waits MaxDelay. Unset is the default; 0s turns
+	// the guard off.
+	Reserve *time.Duration `yaml:"reserve,omitempty" json:"reserve,omitempty"`
 }
 
 // Validate rejects values outside their ranges.
@@ -63,12 +65,11 @@ func (p PaceRoutingConfig) Validate() error {
 
 func (t PaceThrottleConfig) validate() error {
 	const prefix = routingPaceConfigPrefix + "throttle."
-	threshold, floor := t.ThresholdOrDefault(), t.FloorOrDefault()
-	if threshold <= 0 || threshold > 1 {
-		return fmt.Errorf("%sthreshold must be in (0, 1], got %v", prefix, threshold)
+	if margin := t.MarginOrDefault(); margin < 0 || margin > 1 {
+		return fmt.Errorf("%smargin must be in [0, 1], got %v", prefix, margin)
 	}
-	if floor < 0 || floor >= threshold {
-		return fmt.Errorf("%sfloor must be in [0, threshold %v), got %v", prefix, threshold, floor)
+	if reserve := t.ReserveOrDefault(); reserve < 0 {
+		return fmt.Errorf("%sreserve must not be negative, got %s", prefix, reserve)
 	}
 	if t.MaxDelay < 0 {
 		return fmt.Errorf("%smax-delay must not be negative, got %s", prefix, t.MaxDelay)
@@ -84,20 +85,20 @@ func (t PaceThrottleConfig) Warning() string {
 	return ""
 }
 
-// ThresholdOrDefault returns Threshold or its default.
-func (t PaceThrottleConfig) ThresholdOrDefault() float64 {
-	if t.Threshold == nil {
-		return DefaultThrottleThreshold
+// MarginOrDefault returns Margin or its default.
+func (t PaceThrottleConfig) MarginOrDefault() float64 {
+	if t.Margin == nil {
+		return DefaultThrottleMargin
 	}
-	return *t.Threshold
+	return *t.Margin
 }
 
-// FloorOrDefault returns Floor or its default.
-func (t PaceThrottleConfig) FloorOrDefault() float64 {
-	if t.Floor == nil {
-		return DefaultThrottleFloor
+// ReserveOrDefault returns Reserve or its default.
+func (t PaceThrottleConfig) ReserveOrDefault() time.Duration {
+	if t.Reserve == nil {
+		return DefaultThrottleReserve
 	}
-	return *t.Floor
+	return *t.Reserve
 }
 
 // BurstReserveOrDefault returns BurstReserve or its default.

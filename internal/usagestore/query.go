@@ -2,6 +2,7 @@ package usagestore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -277,4 +278,57 @@ func (s *Store) Totals(ctx context.Context, r Range) ([]TotalsRow, error) {
 		return nil, fmt.Errorf("usage store: read totals: %w", err)
 	}
 	return totals, nil
+}
+
+// RequestUsage is one stored request: when, on which account, and its tokens.
+type RequestUsage struct {
+	At        time.Time
+	Provider  string
+	AuthIndex string
+	Model     string
+	SessionID string
+	Tokens    Tokens
+}
+
+// RequestsSince calls fn for each stored request from from on, oldest first, and returns
+// the instant from which the store holds every request: from, unless the request
+// retention or the oldest stored request is later.
+func (s *Store) RequestsSince(ctx context.Context, from time.Time, fn func(RequestUsage)) (time.Time, error) {
+	covered := from
+	if cutoff := s.now().AddDate(0, 0, -s.retention.Load().RequestDays); cutoff.After(covered) {
+		covered = cutoff
+	}
+	var oldest sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(ts_ms) FROM requests`).Scan(&oldest); err != nil {
+		return time.Time{}, fmt.Errorf("usage store: query oldest request: %w", err)
+	}
+	if !oldest.Valid {
+		return s.now(), nil
+	}
+	if first := time.UnixMilli(oldest.Int64); first.After(covered) {
+		covered = first
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ts_ms, provider, auth_index, model, session_id, input_tokens, cache_read_tokens,
+		cache_write_tokens, output_tokens, reasoning_tokens, unclassified_tokens
+		FROM requests WHERE ts_ms >= ? ORDER BY ts_ms`, from.UnixMilli())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("usage store: query requests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var atMs int64
+		var r RequestUsage
+		t := &r.Tokens
+		if err = rows.Scan(&atMs, &r.Provider, &r.AuthIndex, &r.Model, &r.SessionID,
+			&t.Input, &t.CacheRead, &t.CacheWrite, &t.Output, &t.Reasoning, &t.Unclassified); err != nil {
+			return time.Time{}, fmt.Errorf("usage store: read requests: %w", err)
+		}
+		r.At = time.UnixMilli(atMs)
+		fn(r)
+	}
+	if err = rows.Err(); err != nil {
+		return time.Time{}, fmt.Errorf("usage store: read requests: %w", err)
+	}
+	return covered, nil
 }

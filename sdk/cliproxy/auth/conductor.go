@@ -156,7 +156,9 @@ type Manager struct {
 	selector                  Selector
 	hook                      Hook
 	// throttleWait waits out a pace throttle delay; nil uses the wall clock (tests replace it).
-	throttleWait       func(ctx context.Context, d time.Duration) error
+	throttleWait func(ctx context.Context, d time.Duration) error
+	// ledger counts upstream usage for the pace throttle's runway (UsageLedger).
+	ledger             *UsageLedger
 	resultPolicy       atomic.Pointer[resultPolicyHolder]
 	mu                 sync.RWMutex
 	selectorMu         sync.Mutex
@@ -246,6 +248,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		homeSessionSelections: make(map[string]map[homeSessionSelectionKey]*HomeDispatchSelection),
 		providerOffsets:       make(map[string]int),
 		modelPoolOffsets:      make(map[string]int),
+		ledger:                NewUsageLedger(time.Now()),
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})

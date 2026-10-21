@@ -29,16 +29,8 @@ type Ranking struct {
 	// Ranked is false when the current selector is not a Ranker; Entries are then in ID
 	// order with ClassUnknown.
 	Ranked bool
-	// Pool is the pace of all candidates together; nil unless the strategy is pace.
-	Pool *PoolPace
-	// Throttle is set when the pace strategy throttles requests.
-	Throttle *ThrottleStatus
-}
-
-// ThrottleStatus is the throttle's settings and the delay a request gets now.
-type ThrottleStatus struct {
-	Config ThrottleConfig
-	Delay  time.Duration
+	// Runway is the pool's runway and the throttle it sets; nil unless the strategy is pace.
+	Runway *RunwayStatus
 }
 
 // rankerOf returns the Ranker behind selector, looking through session affinity.
@@ -66,11 +58,8 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
 	out.NotCandidates = notCandidates
 	selectionModels := m.selectionModelsLocked(selector, candidates, model)
-	if pool, pace, ok := m.poolPaceLocked(ctx, []string{provider}, model, now); ok {
-		out.Pool = &pool
-		if throttle := pace.Throttle(); throttle.Enabled() {
-			out.Throttle = &ThrottleStatus{Config: throttle, Delay: throttle.Delay(pool.Pace)}
-		}
+	if runway, ok := m.runwayLocked(ctx, []string{provider}, model, now); ok {
+		out.Runway = &runway
 	}
 	m.mu.RUnlock()
 

@@ -48,25 +48,28 @@ type rankingPoolJSON struct {
 	LongWindows   []quota.WindowID   `json:"long_windows"`
 	Entries       []rankingEntryJSON `json:"entries"`
 	NotCandidates []notCandidateJSON `json:"not_candidates"`
-	// PoolPace is null unless the strategy is pace.
-	PoolPace *poolPaceJSON `json:"pool_pace"`
-	// Throttle is null unless the pace strategy throttles requests.
-	Throttle *throttleJSON `json:"throttle"`
+	// Runway is null unless the strategy is pace.
+	Runway *runwayJSON `json:"runway"`
 }
 
-type poolPaceJSON struct {
-	// Pace and Window are null when no candidate has quota data.
-	Pace     *float64        `json:"pace"`
+// runwayJSON is the pool's runway and the throttle it sets (coreauth.RunwayStatus).
+type runwayJSON struct {
+	// Reason is "clear", "short", "reserve" or "learning".
+	Reason string `json:"reason"`
+	// Speed is the share of the forecast the pool serves for a week; null while learning.
+	Speed *float64 `json:"speed"`
+	// DelayMS is the delay a request for this pool gets now; 0 when the throttle is off.
+	DelayMS int64 `json:"delay_ms"`
+	// DryAt is when the pool runs dry at full speed; null when it lasts a week.
+	DryAt    *time.Time      `json:"dry_at"`
 	Window   *quota.WindowID `json:"window"`
 	Accounts int             `json:"accounts"`
-}
-
-type throttleJSON struct {
-	// DelayMS is the delay a request for this pool gets now.
-	DelayMS    int64   `json:"delay_ms"`
-	Threshold  float64 `json:"threshold"`
-	Floor      float64 `json:"floor"`
-	MaxDelayMS int64   `json:"max_delay_ms"`
+	// DemandPerHour is the next hour's forecast in cost units, margin included.
+	DemandPerHour float64 `json:"demand_per_hour"`
+	// MaxDelayMS is 0 when the throttle is off.
+	MaxDelayMS int64 `json:"max_delay_ms"`
+	// Unsized lists the short windows the plan leaves out until an account sizes them.
+	Unsized []quota.WindowID `json:"unsized"`
 }
 
 // GetRoutingRanking returns how the current selector would order each provider's
@@ -99,19 +102,20 @@ func (h *Handler) GetRoutingRanking(c *gin.Context) {
 		if model != "" {
 			pool.Model = &model
 		}
-		if ranking.Pool != nil {
-			pool.PoolPace = &poolPaceJSON{Pace: floatPtr(ranking.Pool.Pace), Accounts: ranking.Pool.Accounts}
-			if pool.PoolPace.Pace != nil {
-				window := ranking.Pool.Window
-				pool.PoolPace.Window = &window
+		if r := ranking.Runway; r != nil {
+			pool.Runway = &runwayJSON{
+				Reason:        string(r.Reason),
+				Speed:         floatPtr(r.Speed),
+				DelayMS:       r.Delay.Milliseconds(),
+				DryAt:         timePtr(r.DryAt),
+				Accounts:      r.Accounts,
+				DemandPerHour: r.Demand,
+				MaxDelayMS:    r.Config.MaxDelay.Milliseconds(),
+				Unsized:       append([]quota.WindowID{}, r.Unsized...),
 			}
-		}
-		if ranking.Throttle != nil {
-			pool.Throttle = &throttleJSON{
-				DelayMS:    ranking.Throttle.Delay.Milliseconds(),
-				Threshold:  ranking.Throttle.Config.Threshold,
-				Floor:      ranking.Throttle.Config.Floor,
-				MaxDelayMS: ranking.Throttle.Config.MaxDelay.Milliseconds(),
+			if r.Window != "" {
+				window := r.Window
+				pool.Runway.Window = &window
 			}
 		}
 		seen := map[quota.WindowID]bool{}
