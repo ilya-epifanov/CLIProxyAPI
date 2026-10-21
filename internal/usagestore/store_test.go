@@ -395,3 +395,38 @@ func TestShutdownOrderKeepsQueuedRecords(t *testing.T) {
 		t.Fatalf("stored %d of %d records, dropped %d", got, n, s.DroppedRecords())
 	}
 }
+
+func TestRequestsSinceReadsRequestsInOrderAndReportsCoverage(t *testing.T) {
+	s := newTestStore(t, baseTime)
+	early := testRecord("r1", baseTime.Add(-3*time.Hour), "claude", "idx-a", "claude-opus-5-5")
+	late := testRecord("r2", baseTime.Add(-time.Hour), "codex", "idx-b", "gpt-5")
+	late.SessionID = "019a0000-0000-7000-8000-000000000001"
+	mustWrite(t, s, late, early)
+
+	var got []RequestUsage
+	covered, err := s.RequestsSince(context.Background(), baseTime.Add(-7*24*time.Hour), func(r RequestUsage) { got = append(got, r) })
+	if err != nil {
+		t.Fatalf("RequestsSince: %v", err)
+	}
+	// The store holds nothing before its oldest request, so coverage starts there.
+	if !covered.Equal(early.RequestedAt) {
+		t.Fatalf("covered from %s, want the oldest request at %s", covered, early.RequestedAt)
+	}
+	if len(got) != 2 || got[0].AuthIndex != "idx-a" || got[1].AuthIndex != "idx-b" || got[1].SessionID != late.SessionID {
+		t.Fatalf("requests = %+v", got)
+	}
+	// Claude reports input without cache reads and output without reasoning.
+	if want := (Tokens{Input: 1000, CacheRead: 600, Output: 300, Reasoning: 100}); got[0].Tokens != want {
+		t.Fatalf("tokens = %+v, want %+v", got[0].Tokens, want)
+	}
+
+	got = nil
+	if covered, err = s.RequestsSince(context.Background(), baseTime.Add(-2*time.Hour), func(r RequestUsage) { got = append(got, r) }); err != nil || len(got) != 1 || !covered.Equal(baseTime.Add(-2*time.Hour)) {
+		t.Fatalf("from 2 h ago: covered %s, requests %+v, err %v", covered, got, err)
+	}
+
+	empty := newTestStore(t, baseTime)
+	if covered, err = empty.RequestsSince(context.Background(), baseTime.Add(-time.Hour), func(RequestUsage) { t.Fatal("no rows expected") }); err != nil || !covered.Equal(baseTime) {
+		t.Fatalf("empty store: covered %s, err %v; want now", covered, err)
+	}
+}

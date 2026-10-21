@@ -57,15 +57,15 @@ routing:
   strategy: pace
   pace:
     throttle:
-      threshold: 0.7
-      floor: 0.1
+      margin: 0.3
+      reserve: 0s
       max-delay: 90s
 `))
 	if err != nil {
 		t.Fatalf("ParseConfigBytes() error = %v", err)
 	}
 	throttle := cfg.Routing.Pace.Throttle
-	if throttle.ThresholdOrDefault() != 0.7 || throttle.FloorOrDefault() != 0.1 || throttle.MaxDelay != 90*time.Second {
+	if throttle.MarginOrDefault() != 0.3 || throttle.ReserveOrDefault() != 0 || throttle.MaxDelay != 90*time.Second {
 		t.Fatalf("throttle = %+v", throttle)
 	}
 
@@ -74,18 +74,16 @@ routing:
 		t.Fatalf("ParseConfigBytes() error = %v", err)
 	}
 	off := defaults.Routing.Pace.Throttle
-	if off.MaxDelay != 0 || off.ThresholdOrDefault() != DefaultThrottleThreshold || off.FloorOrDefault() != DefaultThrottleFloor {
+	if off.MaxDelay != 0 || off.MarginOrDefault() != DefaultThrottleMargin || off.ReserveOrDefault() != DefaultThrottleReserve {
 		t.Fatalf("default throttle = %+v", off)
 	}
 }
 
 func TestPaceThrottleConfigRejectsOutOfRange(t *testing.T) {
 	for _, tc := range []struct{ yaml, field string }{
-		{"threshold: 0", "threshold"},
-		{"threshold: 1.2", "threshold"},
-		{"floor: -0.1", "floor"},
-		{"floor: 0.8", "floor"},
-		{"threshold: 0.5\n      floor: 0.6", "floor"},
+		{"margin: -0.1", "margin"},
+		{"margin: 1.5", "margin"},
+		{"reserve: -1h", "reserve"},
 		{"max-delay: -1s", "max-delay"},
 	} {
 		t.Run(tc.yaml, func(t *testing.T) {

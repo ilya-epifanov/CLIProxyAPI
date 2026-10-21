@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -10,17 +11,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ThrottleConfig slows every request down while the pool spends quota ahead of
-// schedule, so that a busy pool runs out of a window at its reset instead of before it.
-// A pool that runs out stops every client at once with 429s; one account that runs
-// out only moves its sessions to another account.
+// ThrottleConfig slows requests down only as much as keeps the pool from running dry:
+// a pool that runs dry stops every client at once with 429s, while one account that
+// runs out only moves its sessions to another (docs/frontend-design.md §4.7).
 type ThrottleConfig struct {
-	// Threshold is the pool pace below which requests are delayed.
-	Threshold float64
-	// Floor is the pool pace at and below which requests wait MaxDelay.
-	Floor float64
 	// MaxDelay is the longest wait added to one request; 0 turns throttling off.
 	MaxDelay time.Duration
+	// Margin inflates the forecast demand, for error in the forecast and the capacity
+	// estimates.
+	Margin float64
+	// Reserve: while the accounts that can serve now hold less than this long of the
+	// last hour's demand, every request waits MaxDelay. 0 turns the guard off.
+	Reserve time.Duration
 }
 
 // Enabled reports whether requests are ever delayed.
@@ -28,71 +30,40 @@ func (c ThrottleConfig) Enabled() bool {
 	return c.MaxDelay > 0
 }
 
-// Delay returns MaxDelay × (Threshold − pace) / (Threshold − Floor), clamped to
-// [0, MaxDelay]. A NaN pace (no quota data) is no evidence and gets no delay.
-func (c ThrottleConfig) Delay(pace float64) time.Duration {
-	if !c.Enabled() || math.IsNaN(pace) {
-		return 0
-	}
-	f := (c.Threshold - pace) / (c.Threshold - c.Floor)
-	return time.Duration(min(max(f, 0), 1) * float64(c.MaxDelay))
-}
+// RunwayReason says what sets a pool's throttle.
+type RunwayReason string
 
-// PoolPace is the pace of a pool of accounts: for each window, the remaining fractions
-// summed over the accounts divided by the time-left fractions summed over them. Pace is
-// the lowest of those, set by Window.
-type PoolPace struct {
-	// Pace is NaN when no account has quota data.
-	Pace   float64
+const (
+	// RunwayClear: the forecast is served at full speed for a week.
+	RunwayClear RunwayReason = "clear"
+	// RunwayShort: at full speed the pool runs dry within a week; requests run at Speed.
+	RunwayShort RunwayReason = "short"
+	// RunwayReserve: the accounts that can serve now hold less than the reserve.
+	RunwayReserve RunwayReason = "reserve"
+	// RunwayLearning: no account has spent enough of a window to size it yet.
+	RunwayLearning RunwayReason = "learning"
+)
+
+// RunwayStatus is a pool's runway and the throttle it sets.
+type RunwayStatus struct {
+	Reason RunwayReason
+	// Speed is the share of the forecast the pool can serve for a week; 1 when clear,
+	// 0 under the reserve guard, NaN while learning.
+	Speed float64
+	// Delay is what a request waits now; 0 when throttling is off.
+	Delay time.Duration
+	// DryAt is when the pool runs dry at full speed; zero when it lasts a week.
+	DryAt time.Time
+	// Window is the long window of the plan that limits the speed.
 	Window quota.WindowID
-	// Accounts is how many accounts the pace covers.
+	// Accounts is how many accounts the plan spends.
 	Accounts int
-}
-
-// PoolPace returns the pace of the accounts in auths that can serve now: every routing
-// window of their selection model observed and none used up. An account that is used
-// up or has no data says nothing about how fast the rest of the pool is burning. ctx
-// carries the selection models (withSelectionModels) as it does for Pick.
-func (s *PaceSelector) PoolPace(ctx context.Context, auths []*Auth, model string, now time.Time) PoolPace {
-	type share struct{ remaining, timeLeft float64 }
-	shares := map[quota.WindowID]*share{}
-	var order []quota.WindowID
-	out := PoolPace{Pace: math.NaN()}
-	for _, auth := range auths {
-		windows, ok := s.windowsOf(auth, selectionModelFromContext(ctx, auth, model))
-		if !ok || !windows.complete {
-			continue
-		}
-		all := windows.all()
-		usable := true
-		for _, w := range all {
-			if exhausted(w, now) {
-				usable = false
-				break
-			}
-		}
-		if !usable {
-			continue
-		}
-		out.Accounts++
-		for _, w := range all {
-			remaining, timeLeft := windowShare(w, now)
-			sum := shares[w.ID]
-			if sum == nil {
-				sum = &share{}
-				shares[w.ID] = sum
-				order = append(order, w.ID)
-			}
-			sum.remaining += remaining
-			sum.timeLeft += timeLeft
-		}
-	}
-	for _, id := range order {
-		if p := shares[id].remaining / shares[id].timeLeft; math.IsNaN(out.Pace) || p < out.Pace {
-			out.Pace, out.Window = p, id
-		}
-	}
-	return out
+	// Demand is the next hour's forecast in cost units per hour, margin included.
+	Demand float64
+	// Unsized lists the short windows no account has spent enough of to size yet; the
+	// plan leaves them out, so it does not see their rate limit.
+	Unsized []quota.WindowID
+	Config  ThrottleConfig
 }
 
 // Throttle returns the selector's throttle settings.
@@ -109,53 +80,281 @@ func paceSelectorOf(selector Selector) (*PaceSelector, bool) {
 	return pace, ok && pace != nil
 }
 
-// poolPaceLocked returns the pool pace of the candidates for model across providers and
-// the pace selector, or ok false when the strategy is not pace. The caller holds m.mu.
-func (m *Manager) poolPaceLocked(ctx context.Context, providers []string, model string, now time.Time) (PoolPace, *PaceSelector, bool) {
-	pace, ok := paceSelectorOf(m.selector)
-	if !ok {
-		return PoolPace{}, nil, false
-	}
-	var candidates []*Auth
-	for _, provider := range providers {
-		providerCandidates, _ := m.rankingCandidatesLocked(provider, model, now)
-		candidates = append(candidates, providerCandidates...)
-	}
-	ctx = withSelectionModels(ctx, m.selectionModelsLocked(m.selector, candidates, model))
-	return pace.PoolPace(ctx, candidates, model, now), pace, true
+// Ledger returns the usage ledger the throttle plans with. The service registers it as
+// a usage plugin and seeds it from the usage store.
+func (m *Manager) Ledger() *UsageLedger {
+	return m.ledger
 }
 
-// throttle delays a client request while the pool of accounts that can serve model
-// spends quota ahead of schedule (ThrottleConfig). It returns ctx's error when the
-// client goes away during the wait.
+// runwayLocked plans the runway of the pools behind providers for model, the tightest
+// provider deciding, or ok false when the strategy is not pace. The caller holds m.mu.
+func (m *Manager) runwayLocked(ctx context.Context, providers []string, model string, now time.Time) (RunwayStatus, bool) {
+	pace, ok := paceSelectorOf(m.selector)
+	if !ok || m.ledger == nil {
+		return RunwayStatus{}, false
+	}
+	cfg := pace.Throttle()
+	var out RunwayStatus
+	for i, provider := range providers {
+		status := m.providerRunwayLocked(ctx, pace, provider, model, now)
+		if i == 0 || runwayTighter(status, out) {
+			out = status
+		}
+	}
+	out.Config = cfg
+	if cfg.Enabled() {
+		out.Delay = m.throttleDelay(out, now)
+	}
+	return out, true
+}
+
+// runwayTighter reports whether a throttles harder than b; learning throttles least.
+func runwayTighter(a, b RunwayStatus) bool {
+	if a.Reason == RunwayLearning || b.Reason == RunwayLearning {
+		return b.Reason == RunwayLearning && a.Reason != RunwayLearning
+	}
+	return a.Speed < b.Speed
+}
+
+// throttleDelay turns a speed into a wait: an agent loop of turns cycle long runs at
+// cycle / (cycle + delay). Without a turn length it waits MaxDelay.
+func (m *Manager) throttleDelay(status RunwayStatus, now time.Time) time.Duration {
+	cfg := status.Config
+	if status.Reason == RunwayLearning || status.Speed >= 1 {
+		return 0
+	}
+	cycle, ok := m.ledger.Cycle(now)
+	if !ok || status.Speed <= 0 {
+		return cfg.MaxDelay
+	}
+	delay := time.Duration(float64(cycle) * (1/status.Speed - 1))
+	return min(delay, cfg.MaxDelay)
+}
+
+// maxSizeOverMedian bounds an account's estimated window size, as a multiple of its
+// pool's median, before the median replaces it.
+const maxSizeOverMedian = 1.5
+
+// planGroup is one runway plan: the windows that cap each account, and the window whose
+// demand is spent from them.
+type planGroup struct {
+	demand  quota.WindowID
+	windows []quota.WindowID
+}
+
+// observedAccount is one account of a pool with every routing window of its model
+// observed, and the sizes the ledger has for them.
+type observedAccount struct {
+	short   quota.WindowID
+	windows map[quota.WindowID]quota.Window
+	sizes   map[quota.WindowID]float64
+	groups  []planGroup
+	// usable: a candidate now, not cooling down.
+	usable bool
+}
+
+// sizedPool is a pool ready to plan: per demand window, the accounts that spend it.
+type sizedPool struct {
+	order   []planGroup
+	plans   map[quota.WindowID][]RunwayAccount
+	reserve float64
+	unsized []quota.WindowID
+}
+
+// providerRunwayLocked plans one provider's pool. The short window and the first long
+// slot share all of the provider's demand, so they are planned together; a further long
+// slot (the Fable window) is spent only by its own models and is planned alone.
+func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) RunwayStatus {
+	pool, ok := sizePool(m.observePoolLocked(ctx, pace, provider, model, now), now)
+	if !ok || len(pool.order) == 0 {
+		return RunwayStatus{Reason: RunwayLearning, Speed: math.NaN()}
+	}
+	cfg := pace.Throttle()
+	margin := 1 + cfg.Margin
+	var out RunwayStatus
+	for i, group := range pool.order {
+		f := m.ledger.Forecast(provider, group.demand, now)
+		f = Forecast{Hour: f.Hour * margin, Day: f.Day * margin, Week: f.Week * margin}
+		accounts := pool.plans[group.demand]
+		plan := PlanRunway(accounts, f, now)
+		status := RunwayStatus{Reason: RunwayClear, Speed: plan.Speed, DryAt: plan.DryAt, Window: group.demand, Accounts: len(accounts), Demand: f.Hour, Unsized: pool.unsized}
+		if plan.Speed < 1 {
+			status.Reason = RunwayShort
+		}
+		if i == 0 && cfg.Reserve > 0 && pool.reserve < cfg.Reserve.Hours()*f.Hour {
+			status.Reason, status.Speed = RunwayReserve, 0
+		}
+		if i == 0 || status.Speed < out.Speed {
+			out = status
+		}
+	}
+	return out
+}
+
+// observePoolLocked collects the accounts that serve model for provider, cooling-down
+// ones included because they come back at their reset, with their windows and sizes.
+// The caller holds m.mu.
+func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) []observedAccount {
+	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
+	pool := candidates
+	for _, nc := range notCandidates {
+		if nc.Reason == "cooldown" {
+			pool = append(pool, nc.Auth)
+		}
+	}
+	ctx = withSelectionModels(ctx, m.selectionModelsLocked(m.selector, pool, model))
+	var out []observedAccount
+	for i, auth := range pool {
+		routing, tracked := quota.RoutingWindowsFor(auth.Provider, canonicalModelKey(selectionModelFromContext(ctx, auth, model)))
+		if !tracked {
+			continue
+		}
+		snapshot, ok := pace.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
+		if !ok {
+			continue
+		}
+		short, hasShort := snapshot.Window(routing.Short)
+		if !hasShort {
+			continue
+		}
+		obs := observedAccount{
+			short:   routing.Short,
+			windows: map[quota.WindowID]quota.Window{routing.Short: short},
+			sizes:   map[quota.WindowID]float64{},
+			usable:  i < len(candidates),
+		}
+		complete := true
+		for j, slot := range routing.Long {
+			w, found := snapshot.First(slot...)
+			if !found {
+				complete = false
+				break
+			}
+			obs.windows[w.ID] = w
+			group := planGroup{demand: w.ID, windows: []quota.WindowID{w.ID}}
+			if j == 0 {
+				group.windows = []quota.WindowID{routing.Short, w.ID}
+			}
+			obs.groups = append(obs.groups, group)
+		}
+		if !complete {
+			continue
+		}
+		index := auth.EnsureIndex()
+		for id, w := range obs.windows {
+			if units, sized := m.ledger.Capacity(index, w, now); sized {
+				obs.sizes[id] = units
+			}
+		}
+		out = append(out, obs)
+	}
+	return out
+}
+
+// sizePool turns observed accounts into runway accounts. An account without a size, or
+// sized far above its pool (most likely a reset was spent while the gateway was not
+// watching, and oversizing would hide a dry pool), counts as the pool's median. ok is
+// false when no account has sized a long window; a short window nobody sized is left out.
+func sizePool(accounts []observedAccount, now time.Time) (sizedPool, bool) {
+	estimates := map[quota.WindowID][]float64{}
+	for _, obs := range accounts {
+		for id, units := range obs.sizes {
+			estimates[id] = append(estimates[id], units)
+		}
+	}
+	medians := map[quota.WindowID]float64{}
+	for id, values := range estimates {
+		medians[id] = medianOf(values)
+	}
+	out := sizedPool{plans: map[quota.WindowID][]RunwayAccount{}}
+	for _, obs := range accounts {
+		room := math.Inf(1)
+		for _, group := range obs.groups {
+			var windows []RunwayWindow
+			for _, id := range group.windows {
+				median, known := medians[id]
+				if !known {
+					if id != obs.short {
+						return sizedPool{}, false
+					}
+					// Planning on the long windows alone beats not throttling at all.
+					if !slices.Contains(out.unsized, id) {
+						out.unsized = append(out.unsized, id)
+					}
+					continue
+				}
+				units, sized := obs.sizes[id]
+				if !sized || units > maxSizeOverMedian*median {
+					units = median
+				}
+				w := runwayWindowOf(obs.windows[id], units, now)
+				windows = append(windows, w)
+				room = min(room, w.Remaining)
+			}
+			if _, seen := out.plans[group.demand]; !seen {
+				out.order = append(out.order, group)
+			}
+			out.plans[group.demand] = append(out.plans[group.demand], RunwayAccount{Windows: windows})
+		}
+		if obs.usable && room > 0 && !math.IsInf(room, 1) {
+			out.reserve += room
+		}
+	}
+	return out, true
+}
+
+// runwayWindowOf sizes an observed window; a reset that has passed counts as refilled.
+func runwayWindowOf(w quota.Window, capacity float64, now time.Time) RunwayWindow {
+	out := RunwayWindow{ID: w.ID, Remaining: w.Remaining * capacity, Capacity: capacity, ResetAt: w.ResetAt, Length: w.Length}
+	if !w.ResetAt.IsZero() && !w.ResetAt.After(now) {
+		out.Remaining, out.ResetAt = capacity, time.Time{}
+	}
+	return out
+}
+
+// throttle delays a client request as long as the runway of the pools that can serve
+// model asks for (RunwayStatus). It returns ctx's error when the client goes away
+// during the wait.
 func (m *Manager) throttle(ctx context.Context, providers []string, model string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	now := time.Now()
 	m.mu.RLock()
-	pool, pace, ok := m.poolPaceLocked(ctx, providers, model, now)
+	status, ok := m.runwayLocked(ctx, providers, model, now)
 	m.mu.RUnlock()
-	if !ok {
+	if !ok || !status.Config.Enabled() {
 		return nil
 	}
-	delay := pace.Throttle().Delay(pool.Pace)
-	if delay <= 0 {
+	speed := 1.0
+	if cycle, known := m.ledger.Cycle(now); known && status.Delay > 0 {
+		speed = float64(cycle) / float64(cycle+status.Delay)
+	}
+	for _, provider := range providers {
+		m.ledger.SetSpeed(provider, speed)
+	}
+	if status.Delay <= 0 {
 		return nil
 	}
-	logEntryWithRequestID(ctx).WithFields(log.Fields{
-		"delay":     delay.Round(time.Second).String(),
-		"pool_pace": math.Round(pool.Pace*100) / 100,
-		"window":    pool.Window,
-		"accounts":  pool.Accounts,
+	fields := log.Fields{
+		"delay":     status.Delay.Round(time.Second).String(),
+		"reason":    status.Reason,
+		"speed":     math.Round(status.Speed*100) / 100,
+		"window":    status.Window,
+		"accounts":  status.Accounts,
+		"demand":    math.Round(status.Demand*10) / 10,
 		"model":     model,
 		"providers": strings.Join(providers, ","),
-	}).Info("pace throttle: delaying request while the pool spends quota ahead of schedule")
+	}
+	if !status.DryAt.IsZero() {
+		fields["dry_in"] = status.DryAt.Sub(now).Round(time.Minute).String()
+	}
+	logEntryWithRequestID(ctx).WithFields(fields).Info("pace throttle: delaying request so the pool does not run dry")
 	wait := m.throttleWait
 	if wait == nil {
 		wait = waitContext
 	}
-	return wait(ctx, delay)
+	return wait(ctx, status.Delay)
 }
 
 // waitContext waits d or until ctx ends, returning ctx's error then.
