@@ -238,3 +238,16 @@ func TestExecuteStreamWaitsForTheThrottleToo(t *testing.T) {
 		t.Fatalf("ExecuteStream error = %v, waits = %v; want context.Canceled after one wait", err, recorder.waits)
 	}
 }
+
+func TestThrottleLogMessageCarriesTheNumbers(t *testing.T) {
+	status := RunwayStatus{Reason: RunwayShort, Speed: 0.7451, Delay: 21920 * time.Millisecond, DryAt: paceNow.Add(127*time.Hour + 10*time.Second), Window: quota.SevenDay, Accounts: 5, Demand: 47.53}
+	want := "pace throttle: delaying request 22s so the pool does not run dry (speed 0.75 on seven-day, 5 accounts, demand 47.5 units/h, dry in 127h0m0s at full speed)"
+	if got := throttleLogMessage(status, paceNow); got != want {
+		t.Fatalf("message = %q\nwant      %q", got, want)
+	}
+	status.Reason, status.Speed, status.DryAt = RunwayReserve, 0, time.Time{}
+	want = "pace throttle: delaying request 22s so the pool does not run dry (speed 0.00 on seven-day, 5 accounts, demand 47.5 units/h)"
+	if got := throttleLogMessage(status, paceNow); got != want {
+		t.Fatalf("reserve message = %q\nwant              %q", got, want)
+	}
+}

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -336,25 +337,27 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	if status.Delay <= 0 {
 		return nil
 	}
-	fields := log.Fields{
-		"delay":     status.Delay.Round(time.Second).String(),
-		"reason":    status.Reason,
-		"speed":     math.Round(status.Speed*100) / 100,
-		"window":    status.Window,
-		"accounts":  status.Accounts,
-		"demand":    math.Round(status.Demand*10) / 10,
-		"model":     model,
-		"providers": strings.Join(providers, ","),
-	}
-	if !status.DryAt.IsZero() {
-		fields["dry_in"] = status.DryAt.Sub(now).Round(time.Minute).String()
-	}
-	logEntryWithRequestID(ctx).WithFields(fields).Info("pace throttle: delaying request so the pool does not run dry")
+	// The log formatter prints only the fields it knows, so the numbers go in the message.
+	logEntryWithRequestID(ctx).WithFields(log.Fields{
+		"provider": strings.Join(providers, ","),
+		"model":    model,
+		"reason":   string(status.Reason),
+	}).Info(throttleLogMessage(status, now))
 	wait := m.throttleWait
 	if wait == nil {
 		wait = waitContext
 	}
 	return wait(ctx, status.Delay)
+}
+
+// throttleLogMessage describes a delayed request's runway.
+func throttleLogMessage(status RunwayStatus, now time.Time) string {
+	msg := fmt.Sprintf("pace throttle: delaying request %s so the pool does not run dry (speed %.2f on %s, %d accounts, demand %.1f units/h",
+		status.Delay.Round(time.Second), status.Speed, status.Window, status.Accounts, status.Demand)
+	if !status.DryAt.IsZero() {
+		msg += fmt.Sprintf(", dry in %s at full speed", status.DryAt.Sub(now).Round(time.Minute))
+	}
+	return msg + ")"
 }
 
 // waitContext waits d or until ctx ends, returning ctx's error then.
