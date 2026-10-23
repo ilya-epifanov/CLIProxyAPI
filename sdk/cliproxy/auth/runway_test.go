@@ -92,3 +92,15 @@ func TestPlanRunwayCountsRefills(t *testing.T) {
 		t.Fatalf("no demand in the first hour: plan = %+v; want full speed", plan)
 	}
 }
+
+func TestPlanRunwayDryAtFallsInsideTheStep(t *testing.T) {
+	// 0.8 units at 3.6 an hour last about 13 min, inside the first 15-minute step.
+	accounts := []RunwayAccount{{Windows: []RunwayWindow{
+		runwayWindow(quota.FiveHour, 0.8, 5.4, 45*time.Minute, fiveHour),
+		runwayWindow(quota.SevenDay, 40, 47, 160*time.Hour, week),
+	}}}
+	plan := PlanRunway(accounts, Forecast{Hour: 3.6, Day: 3.6, Week: 3.6}, paceNow)
+	if dry := plan.DryAt.Sub(paceNow); (dry - 800*time.Second).Abs() > time.Second {
+		t.Fatalf("dry in %s, want 0.8 / 3.6 h = 13m20s", dry)
+	}
+}
