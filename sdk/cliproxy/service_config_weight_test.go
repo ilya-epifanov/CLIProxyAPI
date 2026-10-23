@@ -88,7 +88,7 @@ func TestPaceRoutingSelector(t *testing.T) {
 		BurstReserve:  internalconfig.DefaultPaceBurstReserve,
 		PaceTolerance: 0.3,
 		StaleAfter:    internalconfig.DefaultPaceStaleAfter,
-		Throttle:      coreauth.ThrottleConfig{Margin: internalconfig.DefaultThrottleMargin, GuardHorizon: internalconfig.DefaultThrottleGuard},
+		Throttle:      coreauth.ThrottleConfig{Margin: internalconfig.DefaultThrottleMargin, Reserve: internalconfig.DefaultThrottleReserve, GuardHorizon: internalconfig.DefaultThrottleGuard},
 	}
 	if state.strategy != "pace" || state.pace != want {
 		t.Fatalf("state = %+v, want pace with %+v", state, want)

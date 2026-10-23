@@ -172,15 +172,20 @@ func TestGuardSpeed(t *testing.T) {
 		}, 12 * time.Hour, 0.25, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			speed, under := sizedPool{guard: tc.guard}.guardSpeed(tc.horizon, 0, 1, paceNow)
+			speed, under := sizedPool{guard: tc.guard}.guardSpeed(tc.horizon, 0, 0, 1, paceNow)
 			if under != tc.under || (under && math.Abs(speed-tc.speed) > 1e-9) {
 				t.Fatalf("guardSpeed = %v, %v; want %v, %v", speed, under, tc.speed, tc.under)
 			}
 		})
 	}
+	// The reserve is held back: 0.5 less 0.1 at 0.25 an hour lasts 1.6 h of the 4 h.
+	reserved := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.5, burn: 0.25, refill: refill(4 * time.Hour)}}}
+	if speed, _ := reserved.guardSpeed(12*time.Hour, 0, 0.1, 1, paceNow); math.Abs(speed-0.4) > 1e-9 {
+		t.Fatalf("reserved speed = %v; want 0.4", speed)
+	}
 	// The burn is undone by the speed it ran at and inflated by the margin.
 	pool := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.5, burn: 0.125, refill: refill(4 * time.Hour)}}}
-	if speed, _ := pool.guardSpeed(12*time.Hour, 0.25, 0.5, paceNow); math.Abs(speed-0.4) > 1e-9 {
+	if speed, _ := pool.guardSpeed(12*time.Hour, 0.25, 0, 0.5, paceNow); math.Abs(speed-0.4) > 1e-9 {
 		t.Fatalf("speed = %v; want 0.5 / (0.125 / 0.5 × 1.25) / 4 = 0.4", speed)
 	}
 }
@@ -198,7 +203,7 @@ func TestGuardIgnoresAGlobalSizeError(t *testing.T) {
 			sized := units * scale
 			g = g.add(window(sized), sized/(150*scale), 0.2, true)
 		}
-		speed, _ := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: g}}.guardSpeed(12*time.Hour, 0, 1, paceNow)
+		speed, _ := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: g}}.guardSpeed(12*time.Hour, 0, 0, 1, paceNow)
 		speeds = append(speeds, speed)
 	}
 	if math.Abs(speeds[0]-speeds[1]) > 1e-12 || speeds[0] >= 1 {

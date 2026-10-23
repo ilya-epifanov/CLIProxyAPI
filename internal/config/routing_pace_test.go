@@ -59,13 +59,14 @@ routing:
     throttle:
       margin: 0.3
       guard-horizon: 0s
+      reserve: 0.05
       max-delay: 90s
 `))
 	if err != nil {
 		t.Fatalf("ParseConfigBytes() error = %v", err)
 	}
 	throttle := cfg.Routing.Pace.Throttle
-	if throttle.MarginOrDefault() != 0.3 || throttle.GuardHorizonOrDefault() != 0 || throttle.MaxDelay != 90*time.Second {
+	if throttle.MarginOrDefault() != 0.3 || throttle.GuardHorizonOrDefault() != 0 || throttle.ReserveOrDefault() != 0.05 || throttle.MaxDelay != 90*time.Second {
 		t.Fatalf("throttle = %+v", throttle)
 	}
 
@@ -74,7 +75,7 @@ routing:
 		t.Fatalf("ParseConfigBytes() error = %v", err)
 	}
 	off := defaults.Routing.Pace.Throttle
-	if off.MaxDelay != 0 || off.MarginOrDefault() != DefaultThrottleMargin || off.GuardHorizonOrDefault() != DefaultThrottleGuard {
+	if off.MaxDelay != 0 || off.MarginOrDefault() != DefaultThrottleMargin || off.GuardHorizonOrDefault() != DefaultThrottleGuard || off.ReserveOrDefault() != DefaultThrottleReserve {
 		t.Fatalf("default throttle = %+v", off)
 	}
 }
@@ -84,6 +85,8 @@ func TestPaceThrottleConfigRejectsOutOfRange(t *testing.T) {
 		{"margin: -0.1", "margin"},
 		{"margin: 1.5", "margin"},
 		{"guard-horizon: -1h", "guard-horizon"},
+		{"reserve: -0.1", "reserve"},
+		{"reserve: 1", "reserve"},
 		{"max-delay: -1s", "max-delay"},
 	} {
 		t.Run(tc.yaml, func(t *testing.T) {
