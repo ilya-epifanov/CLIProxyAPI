@@ -141,9 +141,9 @@ func TestExecuteWaitsTheMaximumUnderTheReserve(t *testing.T) {
 }
 
 func TestExecuteDoesNotWaitWhileLearning(t *testing.T) {
-	// 5 % of the 7-day window spent is too little to size it.
+	// 5 % of each window spent is too little to size either.
 	learning := shortScenario
-	learning.sevenDay = 0.95
+	learning.sevenDay, learning.fiveHour = 0.95, 0.95
 	manager, recorder := newThrottledManager(t, throttleOn, learning)
 	if err := execute(t, manager); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -167,6 +167,20 @@ func TestRunwayPlansOnTheLongWindowsWhileTheShortOneIsUnsized(t *testing.T) {
 	r := manager.RankCandidates(context.Background(), "claude", "claude-opus-5-5").Runway
 	if r == nil || r.Reason != RunwayClear || len(r.Unsized) != 1 || r.Unsized[0] != quota.FiveHour {
 		t.Fatalf("runway = %+v; want clear with five-hour unsized", r)
+	}
+}
+
+func TestRunwayPlansOnTheShortWindowWhileTheLongOneIsUnsized(t *testing.T) {
+	// A week barely touched but a 5-hour window half gone: the next hour still overruns it.
+	unsized := shortScenario
+	unsized.sevenDay = 0.95
+	manager, recorder := newThrottledManager(t, throttleOn, unsized)
+	if err := execute(t, manager); err != nil || len(recorder.waits) != 1 || recorder.waits[0] <= 0 {
+		t.Fatalf("err = %v, waits = %v; want one wait", err, recorder.waits)
+	}
+	r := manager.RankCandidates(context.Background(), "claude", "claude-opus-5-5").Runway
+	if r == nil || r.Reason != RunwayShort || len(r.Unsized) != 1 || r.Unsized[0] != quota.SevenDay {
+		t.Fatalf("runway = %+v; want short with seven-day unsized", r)
 	}
 }
 

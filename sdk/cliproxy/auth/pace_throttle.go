@@ -41,7 +41,7 @@ const (
 	RunwayShort RunwayReason = "short"
 	// RunwayReserve: the accounts that can serve now hold less than the reserve.
 	RunwayReserve RunwayReason = "reserve"
-	// RunwayLearning: no account has spent enough of a window to size it yet.
+	// RunwayLearning: no account has spent enough of any window to size it yet.
 	RunwayLearning RunwayReason = "learning"
 )
 
@@ -61,8 +61,8 @@ type RunwayStatus struct {
 	Accounts int
 	// Demand is the next hour's forecast in cost units per hour, margin included.
 	Demand float64
-	// Unsized lists the short windows no account has spent enough of to size yet; the
-	// plan leaves them out, so it does not see their rate limit.
+	// Unsized lists the windows no account has spent enough of to size yet; the plan
+	// leaves them out, so it does not see their limit.
 	Unsized []quota.WindowID
 	Config  ThrottleConfig
 }
@@ -146,7 +146,6 @@ type planGroup struct {
 // observedAccount is one account of a pool with every routing window of its model
 // observed, and the sizes the ledger has for them.
 type observedAccount struct {
-	short   quota.WindowID
 	windows map[quota.WindowID]quota.Window
 	sizes   map[quota.WindowID]float64
 	groups  []planGroup
@@ -166,8 +165,8 @@ type sizedPool struct {
 // slot share all of the provider's demand, so they are planned together; a further long
 // slot (the Fable window) is spent only by its own models and is planned alone.
 func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) RunwayStatus {
-	pool, ok := sizePool(m.observePoolLocked(ctx, pace, provider, model, now), now)
-	if !ok || len(pool.order) == 0 {
+	pool := sizePool(m.observePoolLocked(ctx, pace, provider, model, now), now)
+	if len(pool.order) == 0 {
 		return RunwayStatus{Reason: RunwayLearning, Speed: math.NaN()}
 	}
 	cfg := pace.Throttle()
@@ -219,7 +218,6 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 			continue
 		}
 		obs := observedAccount{
-			short:   routing.Short,
 			windows: map[quota.WindowID]quota.Window{routing.Short: short},
 			sizes:   map[quota.WindowID]float64{},
 			usable:  i < len(candidates),
@@ -254,9 +252,9 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 
 // sizePool turns observed accounts into runway accounts. An account without a size, or
 // sized far above its pool (most likely a reset was spent while the gateway was not
-// watching, and oversizing would hide a dry pool), counts as the pool's median. ok is
-// false when no account has sized a long window; a short window nobody sized is left out.
-func sizePool(accounts []observedAccount, now time.Time) (sizedPool, bool) {
+// watching, and oversizing would hide a dry pool), counts as the pool's median. A window
+// nobody has sized is left out; a plan left with no window is dropped.
+func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 	estimates := map[quota.WindowID][]float64{}
 	for _, obs := range accounts {
 		for id, units := range obs.sizes {
@@ -275,10 +273,7 @@ func sizePool(accounts []observedAccount, now time.Time) (sizedPool, bool) {
 			for _, id := range group.windows {
 				median, known := medians[id]
 				if !known {
-					if id != obs.short {
-						return sizedPool{}, false
-					}
-					// Planning on the long windows alone beats not throttling at all.
+					// Planning on the sized windows alone beats not throttling at all.
 					if !slices.Contains(out.unsized, id) {
 						out.unsized = append(out.unsized, id)
 					}
@@ -292,6 +287,9 @@ func sizePool(accounts []observedAccount, now time.Time) (sizedPool, bool) {
 				windows = append(windows, w)
 				room = min(room, w.Remaining)
 			}
+			if len(windows) == 0 {
+				continue
+			}
 			if _, seen := out.plans[group.demand]; !seen {
 				out.order = append(out.order, group)
 			}
@@ -301,7 +299,7 @@ func sizePool(accounts []observedAccount, now time.Time) (sizedPool, bool) {
 			out.reserve += room
 		}
 	}
-	return out, true
+	return out
 }
 
 // runwayWindowOf sizes an observed window; a reset that has passed counts as refilled.
