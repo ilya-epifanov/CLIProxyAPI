@@ -73,7 +73,7 @@ func TestLedgerAveragesOverTheSpanItCovers(t *testing.T) {
 
 func TestLedgerScalesLiveDemandByTheThrottleSpeed(t *testing.T) {
 	l := NewUsageLedger(paceNow.Add(-ledgerSpan))
-	l.SetSpeed("claude", 0.5)
+	l.SetSpeed("claude", 0.5, paceNow)
 	l.Add(ledgerEntry(10*time.Minute, "a", "claude-opus-5-5", 1), true)
 	l.Add(ledgerEntry(10*time.Minute, "a", "claude-opus-5-5", 1), false)
 	if f := l.Forecast("claude", quota.SevenDay, paceNow); f.Hour != 3 {
@@ -187,5 +187,63 @@ func TestLedgerCapacityStartsOverAfterASpentReset(t *testing.T) {
 	now.Remaining, now.ObservedAt = 0.8, paceNow
 	if units, ok := l.Capacity("a", now, paceNow); !ok || math.Abs(units-800) > 1e-6 {
 		t.Fatalf("after the reset: %v, %v; want 160 / 0.2 = 800, not (400 + 160) / 0.2", units, ok)
+	}
+}
+
+func TestLedgerBurnFromTheQuotaReads(t *testing.T) {
+	l := NewUsageLedger(paceNow.Add(-ledgerSpan))
+	reset := paceNow.Add(2 * time.Hour)
+	obs := func(ago time.Duration, used float64, reset time.Time) {
+		l.Observe("a", quota.Window{ID: quota.FiveHour, Remaining: 1 - used, ResetAt: reset, Length: fiveHour, ObservedAt: paceNow.Add(-ago)})
+	}
+	obs(90*time.Minute, 0.1, reset) // older than the burn span: ignored
+	obs(50*time.Minute, 0.3, reset)
+	if _, ok := l.Burn("a", quota.FiveHour, paceNow); ok {
+		t.Fatal("one read in the span is no burn")
+	}
+	obs(25*time.Minute, 0.4, reset)
+	obs(25*time.Minute, 0.9, reset) // not newer: dropped
+	if _, ok := l.Burn("a", quota.FiveHour, paceNow); ok {
+		t.Fatal("30 min of reads are needed")
+	}
+	obs(0, 0.5, reset)
+	if burn, ok := l.Burn("a", quota.FiveHour, paceNow); !ok || math.Abs(burn-0.24) > 1e-9 {
+		t.Fatalf("burn = %v, %v; want 0.2 over 50 min = 0.24/h", burn, ok)
+	}
+	// After a reset, what is used now was all spent since.
+	l2 := NewUsageLedger(paceNow.Add(-ledgerSpan))
+	l2.Observe("a", quota.Window{ID: quota.FiveHour, Remaining: 0.2, ResetAt: paceNow.Add(-10 * time.Minute), Length: fiveHour, ObservedAt: paceNow.Add(-40 * time.Minute)})
+	l2.Observe("a", quota.Window{ID: quota.FiveHour, Remaining: 0.9, ResetAt: paceNow.Add(fiveHour), Length: fiveHour, ObservedAt: paceNow})
+	if burn, ok := l2.Burn("a", quota.FiveHour, paceNow); !ok || math.Abs(burn-0.15) > 1e-9 {
+		t.Fatalf("burn across a reset = %v, %v; want 0.1 over 40 min = 0.15/h", burn, ok)
+	}
+}
+
+func TestLedgerMeanSpeed(t *testing.T) {
+	l := NewUsageLedger(paceNow.Add(-ledgerSpan))
+	if got := l.MeanSpeed("claude", paceNow); got != 1 {
+		t.Fatalf("no samples: %v, want 1", got)
+	}
+	l.SetSpeed("claude", 0.2, paceNow.Add(-2*time.Hour)) // holds until the next sample
+	l.SetSpeed("claude", 0.4, paceNow.Add(-30*time.Minute))
+	l.SetSpeed("claude", 0.9, paceNow.Add(-30*time.Minute+10*time.Second)) // same minute: replaces
+	l.SetSpeed("claude", 0.5, paceNow)                                     // holds from now: no weight yet
+	if got := l.MeanSpeed("claude", paceNow); math.Abs(got-0.55) > 1e-9 {
+		t.Fatalf("mean speed = %v, want 0.2 for 30 min and 0.9 for 30 min", got)
+	}
+	fresh := NewUsageLedger(paceNow.Add(-ledgerSpan))
+	fresh.SetSpeed("claude", 0.5, paceNow.Add(-15*time.Minute))
+	if got := fresh.MeanSpeed("claude", paceNow); math.Abs(got-0.875) > 1e-9 {
+		t.Fatalf("mean speed = %v, want full speed for 45 min, 0.5 for 15", got)
+	}
+}
+
+func TestLedgerTreatsNearlyEqualResetsAsOneWindow(t *testing.T) {
+	l := NewUsageLedger(paceNow.Add(-ledgerSpan))
+	reset := paceNow.Add(2 * time.Hour)
+	l.Observe("a", quota.Window{ID: quota.FiveHour, Remaining: 0.7, ResetAt: reset.Add(400 * time.Millisecond), Length: fiveHour, ObservedAt: paceNow.Add(-40 * time.Minute)})
+	l.Observe("a", quota.Window{ID: quota.FiveHour, Remaining: 0.5, ResetAt: reset, Length: fiveHour, ObservedAt: paceNow})
+	if burn, ok := l.Burn("a", quota.FiveHour, paceNow); !ok || math.Abs(burn-0.3) > 1e-9 {
+		t.Fatalf("burn = %v, %v; want 0.2 over 40 min, not a reset", burn, ok)
 	}
 }

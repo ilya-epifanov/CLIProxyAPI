@@ -58,9 +58,9 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 			PaceTolerance: cfg.Routing.Pace.PaceToleranceOrDefault(),
 			StaleAfter:    cfg.Routing.Pace.StaleAfterOrDefault(),
 			Throttle: coreauth.ThrottleConfig{
-				MaxDelay: cfg.Routing.Pace.Throttle.MaxDelay,
-				Margin:   cfg.Routing.Pace.Throttle.MarginOrDefault(),
-				Reserve:  cfg.Routing.Pace.Throttle.ReserveOrDefault(),
+				MaxDelay:     cfg.Routing.Pace.Throttle.MaxDelay,
+				Margin:       cfg.Routing.Pace.Throttle.MarginOrDefault(),
+				GuardHorizon: cfg.Routing.Pace.Throttle.GuardHorizonOrDefault(),
 			},
 		}
 	}

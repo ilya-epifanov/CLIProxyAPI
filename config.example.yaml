@@ -165,7 +165,8 @@ routing:
   #                        # Codex and pi wait for a response, and under Claude's 5-minute prompt cache;
   #                        # 120s is a good value. 240s or more logs a warning.
   #     margin: 0.15       # forecast demand x (1 + margin), for forecast and sizing error
-  #     reserve: 2h        # below this much of the last hour's demand left now, wait max-delay; 0s disables
+  #     guard-horizon: 12h # the guard: at the burn the quota reads show, what the usable accounts
+  #                        # hold must last until its window refills or this long; 0s disables
   # With session-affinity, a bound session keeps its account while its prompt cache is warm. Once
   # the cache is gone (the first turn changed, as after compaction, or a Claude session was idle
   # longer than its prompt cache lives), the session moves unless its account is in the top band.
