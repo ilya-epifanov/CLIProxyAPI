@@ -11,7 +11,7 @@ const (
 	DefaultPaceTolerance    = 0.1
 	DefaultPaceStaleAfter   = 15 * time.Minute
 	DefaultThrottleMargin   = 0.15
-	DefaultThrottleReserve  = 2 * time.Hour
+	DefaultThrottleGuard    = 12 * time.Hour
 	routingPaceConfigPrefix = "routing.pace."
 	// throttleWarnDelay is where a throttle delay nears the 300 s that Claude Code,
 	// Codex and pi wait for a response before they give up.
@@ -43,10 +43,10 @@ type PaceThrottleConfig struct {
 	// Margin inflates the forecast demand, for error in the forecast and the quota
 	// sizes; [0, 1].
 	Margin *float64 `yaml:"margin,omitempty" json:"margin,omitempty"`
-	// Reserve: while the accounts that can serve now hold less than this long of the
-	// last hour's demand, every request waits MaxDelay. Unset is the default; 0s turns
-	// the guard off.
-	Reserve *time.Duration `yaml:"reserve,omitempty" json:"reserve,omitempty"`
+	// GuardHorizon is how far ahead the guard looks: what the usable accounts hold now
+	// must last, at the burn the quota reads show, until its window refills or for this
+	// long. Unset is the default; 0s turns the guard off.
+	GuardHorizon *time.Duration `yaml:"guard-horizon,omitempty" json:"guard-horizon,omitempty"`
 }
 
 // Validate rejects values outside their ranges.
@@ -68,8 +68,8 @@ func (t PaceThrottleConfig) validate() error {
 	if margin := t.MarginOrDefault(); margin < 0 || margin > 1 {
 		return fmt.Errorf("%smargin must be in [0, 1], got %v", prefix, margin)
 	}
-	if reserve := t.ReserveOrDefault(); reserve < 0 {
-		return fmt.Errorf("%sreserve must not be negative, got %s", prefix, reserve)
+	if horizon := t.GuardHorizonOrDefault(); horizon < 0 {
+		return fmt.Errorf("%sguard-horizon must not be negative, got %s", prefix, horizon)
 	}
 	if t.MaxDelay < 0 {
 		return fmt.Errorf("%smax-delay must not be negative, got %s", prefix, t.MaxDelay)
@@ -93,12 +93,12 @@ func (t PaceThrottleConfig) MarginOrDefault() float64 {
 	return *t.Margin
 }
 
-// ReserveOrDefault returns Reserve or its default.
-func (t PaceThrottleConfig) ReserveOrDefault() time.Duration {
-	if t.Reserve == nil {
-		return DefaultThrottleReserve
+// GuardHorizonOrDefault returns GuardHorizon or its default.
+func (t PaceThrottleConfig) GuardHorizonOrDefault() time.Duration {
+	if t.GuardHorizon == nil {
+		return DefaultThrottleGuard
 	}
-	return *t.Reserve
+	return *t.GuardHorizon
 }
 
 // BurstReserveOrDefault returns BurstReserve or its default.
