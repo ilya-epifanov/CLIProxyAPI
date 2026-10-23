@@ -12,6 +12,7 @@ const (
 	DefaultPaceStaleAfter   = 15 * time.Minute
 	DefaultThrottleMargin   = 0.15
 	DefaultThrottleGuard    = 12 * time.Hour
+	DefaultThrottleReserve  = 0.03
 	routingPaceConfigPrefix = "routing.pace."
 	// throttleWarnDelay is where a throttle delay nears the 300 s that Claude Code,
 	// Codex and pi wait for a response before they give up.
@@ -43,6 +44,9 @@ type PaceThrottleConfig struct {
 	// Margin inflates the forecast demand, for error in the forecast and the quota
 	// sizes; [0, 1].
 	Margin *float64 `yaml:"margin,omitempty" json:"margin,omitempty"`
+	// Reserve is the share of one window the pool keeps unspent until it refills, so the
+	// last account keeps that much at its reset; [0, 1).
+	Reserve *float64 `yaml:"reserve,omitempty" json:"reserve,omitempty"`
 	// GuardHorizon is how far ahead the guard looks: what the usable accounts hold now
 	// must last, at the burn the quota reads show, until its window refills or for this
 	// long. Unset is the default; 0s turns the guard off.
@@ -68,6 +72,9 @@ func (t PaceThrottleConfig) validate() error {
 	if margin := t.MarginOrDefault(); margin < 0 || margin > 1 {
 		return fmt.Errorf("%smargin must be in [0, 1], got %v", prefix, margin)
 	}
+	if reserve := t.ReserveOrDefault(); reserve < 0 || reserve >= 1 {
+		return fmt.Errorf("%sreserve must be in [0, 1), got %v", prefix, reserve)
+	}
 	if horizon := t.GuardHorizonOrDefault(); horizon < 0 {
 		return fmt.Errorf("%sguard-horizon must not be negative, got %s", prefix, horizon)
 	}
@@ -91,6 +98,14 @@ func (t PaceThrottleConfig) MarginOrDefault() float64 {
 		return DefaultThrottleMargin
 	}
 	return *t.Margin
+}
+
+// ReserveOrDefault returns Reserve or its default.
+func (t PaceThrottleConfig) ReserveOrDefault() float64 {
+	if t.Reserve == nil {
+		return DefaultThrottleReserve
+	}
+	return *t.Reserve
 }
 
 // GuardHorizonOrDefault returns GuardHorizon or its default.

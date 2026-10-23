@@ -77,13 +77,14 @@ const (
 // PlanRunway spends the forecast from the accounts over the next week, the account whose
 // longest window resets first spending first, because quota left at a reset is lost.
 // Every account is capped by each of its windows, a window refills at its reset, and an
-// idle window starts its clock when it is first spent.
-func PlanRunway(accounts []RunwayAccount, f Forecast, now time.Time) RunwayPlan {
-	if dryAt, ok := runwayServes(accounts, f, 1, now); !ok {
+// idle window starts its clock when it is first spent. The pool never spends the last
+// keep[id] units of a window id, summed over its accounts.
+func PlanRunway(accounts []RunwayAccount, f Forecast, keep map[quota.WindowID]float64, now time.Time) RunwayPlan {
+	if dryAt, ok := runwayServes(accounts, f, keep, 1, now); !ok {
 		lo, hi := 0.0, 1.0
 		for range runwaySearches {
 			mid := (lo + hi) / 2
-			if _, served := runwayServes(accounts, f, mid, now); served {
+			if _, served := runwayServes(accounts, f, keep, mid, now); served {
 				lo = mid
 			} else {
 				hi = mid
@@ -96,7 +97,7 @@ func PlanRunway(accounts []RunwayAccount, f Forecast, now time.Time) RunwayPlan 
 
 // runwayServes reports whether scale × the forecast is fully served over the horizon,
 // and otherwise the first step that is not.
-func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.Time) (time.Time, bool) {
+func runwayServes(accounts []RunwayAccount, f Forecast, keep map[quota.WindowID]float64, scale float64, now time.Time) (time.Time, bool) {
 	state := make([][]RunwayWindow, len(accounts))
 	for i, account := range accounts {
 		state[i] = append([]RunwayWindow(nil), account.Windows...)
@@ -121,6 +122,16 @@ func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.
 		sort.SliceStable(order, func(a, b int) bool {
 			return expiryOf(state[order[a]]).Before(expiryOf(state[order[b]]))
 		})
+		// What the pool may still spend of each window, above what it keeps.
+		spendable := map[quota.WindowID]float64{}
+		for _, windows := range state {
+			for _, w := range windows {
+				spendable[w.ID] += w.Remaining
+			}
+		}
+		for id := range spendable {
+			spendable[id] -= keep[id]
+		}
 		want := scale * f.at(ahead) * step.Hours()
 		need := want
 		for _, i := range order {
@@ -129,7 +140,7 @@ func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.
 			}
 			take := need
 			for _, w := range state[i] {
-				take = min(take, w.Remaining)
+				take = min(take, w.Remaining, spendable[w.ID])
 			}
 			if take <= 0 {
 				continue
@@ -140,6 +151,7 @@ func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.
 					w.ResetAt = at.Add(w.Length)
 				}
 				w.Remaining -= take
+				spendable[w.ID] -= take
 			}
 			need -= take
 		}

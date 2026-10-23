@@ -21,6 +21,10 @@ type ThrottleConfig struct {
 	// Margin inflates the forecast demand, for error in the forecast and the capacity
 	// estimates.
 	Margin float64
+	// Reserve is the share of one window (the pool's median size) that the pool keeps
+	// unspent at all times, in the plan and in the guard, so the last account does not
+	// run to its very end before a refill.
+	Reserve float64
 	// GuardHorizon is how far ahead the guard looks: what the usable accounts hold now
 	// must last, at the burn the quota reads show, until its window refills or for this
 	// long. 0 turns the guard off.
@@ -160,10 +164,21 @@ type observedAccount struct {
 
 // sizedPool is a pool ready to plan: per demand window, the accounts that spend it.
 type sizedPool struct {
-	order   []planGroup
-	plans   map[quota.WindowID][]RunwayAccount
-	guard   map[quota.WindowID]*guardWindow
+	order []planGroup
+	plans map[quota.WindowID][]RunwayAccount
+	guard map[quota.WindowID]*guardWindow
+	// medians is each window's median size across the pool, in units.
+	medians map[quota.WindowID]float64
 	unsized []quota.WindowID
+}
+
+// keep is what the pool holds back of each window: share of its median size.
+func (p sizedPool) keep(share float64) map[quota.WindowID]float64 {
+	out := make(map[quota.WindowID]float64, len(p.medians))
+	for id, median := range p.medians {
+		out[id] = share * median
+	}
+	return out
 }
 
 // guardWindow is one window across the pool, in units of the pool's median size for it,
@@ -190,13 +205,13 @@ func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, 
 		f := m.ledger.Forecast(provider, group.demand, now)
 		f = Forecast{Hour: f.Hour * margin, Day: f.Day * margin, Week: f.Week * margin}
 		accounts := pool.plans[group.demand]
-		plan := PlanRunway(accounts, f, now)
+		plan := PlanRunway(accounts, f, pool.keep(cfg.Reserve), now)
 		status := RunwayStatus{Reason: RunwayClear, Speed: plan.Speed, DryAt: plan.DryAt, Window: group.demand, Accounts: len(accounts), Demand: f.Hour, Unsized: pool.unsized}
 		if plan.Speed < 1 {
 			status.Reason = RunwayShort
 		}
 		if i == 0 {
-			speed, under := pool.guardSpeed(cfg.GuardHorizon, cfg.Margin, m.ledger.MeanSpeed(provider, now), now)
+			speed, under := pool.guardSpeed(cfg.GuardHorizon, cfg.Margin, cfg.Reserve, m.ledger.MeanSpeed(provider, now), now)
 			if under && speed < status.Speed {
 				status.Reason, status.Speed = RunwayReserve, speed
 			}
@@ -287,7 +302,7 @@ func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 	for id, values := range estimates {
 		medians[id] = medianOf(values)
 	}
-	out := sizedPool{plans: map[quota.WindowID][]RunwayAccount{}, guard: map[quota.WindowID]*guardWindow{}}
+	out := sizedPool{plans: map[quota.WindowID][]RunwayAccount{}, guard: map[quota.WindowID]*guardWindow{}, medians: medians}
 	for _, obs := range accounts {
 		guarded := map[quota.WindowID]bool{}
 		for _, group := range obs.groups {
@@ -340,11 +355,12 @@ func (g *guardWindow) add(w RunwayWindow, rel, burn float64, usable bool) *guard
 }
 
 // guardSpeed is the guard (ThrottleConfig.GuardHorizon). It needs no window size: for
-// each window, the share the usable accounts hold over the share the pool burns per hour
-// (undone by the speed it ran at, inflated by margin) is how long they last. When that
-// is shorter than the time to the window's refill, capped at horizon, under is true and
-// speed is the share of the burn that lasts until then; the lowest over the windows wins.
-func (p sizedPool) guardSpeed(horizon time.Duration, margin, speedNow float64, now time.Time) (float64, bool) {
+// each window, the share the usable accounts hold, less reserve of a median window, over
+// the share the pool burns per hour (undone by the speed it ran at, inflated by margin)
+// is how long they last. When that is shorter than the time to the window's refill,
+// capped at horizon, under is true and speed is the share of the burn that lasts until
+// then; the lowest over the windows wins.
+func (p sizedPool) guardSpeed(horizon time.Duration, margin, reserve, speedNow float64, now time.Time) (float64, bool) {
 	if horizon <= 0 {
 		return 0, false
 	}
@@ -354,7 +370,7 @@ func (p sizedPool) guardSpeed(horizon time.Duration, margin, speedNow float64, n
 			continue
 		}
 		burn := g.burn / max(speedNow, 1e-3) * (1 + margin)
-		lasts := g.room / burn
+		lasts := max(g.room-reserve, 0) / burn
 		until := horizon
 		if !g.refill.IsZero() {
 			until = min(until, max(g.refill.Sub(now), time.Minute))
