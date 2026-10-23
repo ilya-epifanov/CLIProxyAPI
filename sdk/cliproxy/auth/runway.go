@@ -60,8 +60,8 @@ func (f Forecast) at(ahead time.Duration) float64 {
 type RunwayPlan struct {
 	// Speed is the highest share (0..1) of the forecast at which every step is served.
 	Speed float64
-	// DryAt is the first step the pool cannot serve at full speed; zero when it lasts
-	// the horizon.
+	// DryAt is when the pool runs out at full speed, inside the first step it cannot
+	// fully serve; zero when it lasts the horizon.
 	DryAt time.Time
 }
 
@@ -121,7 +121,8 @@ func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.
 		sort.SliceStable(order, func(a, b int) bool {
 			return expiryOf(state[order[a]]).Before(expiryOf(state[order[b]]))
 		})
-		need := scale * f.at(ahead) * step.Hours()
+		want := scale * f.at(ahead) * step.Hours()
+		need := want
 		for _, i := range order {
 			if need <= 0 {
 				break
@@ -144,7 +145,8 @@ func runwayServes(accounts []RunwayAccount, f Forecast, scale float64, now time.
 		}
 		// A millionth of a unit is far below one request; it only absorbs rounding.
 		if need > 1e-6 {
-			return at, false
+			// Demand is even over the step: it runs out after the share that was served.
+			return at.Add(time.Duration((want - need) / want * float64(step))), false
 		}
 		ahead += step
 	}
