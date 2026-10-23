@@ -21,9 +21,10 @@ type ThrottleConfig struct {
 	// Margin inflates the forecast demand, for error in the forecast and the capacity
 	// estimates.
 	Margin float64
-	// Reserve: while the accounts that can serve now hold less than this long of the
-	// last hour's demand, every request waits MaxDelay. 0 turns the guard off.
-	Reserve time.Duration
+	// GuardHorizon is how far ahead the guard looks: what the usable accounts hold now
+	// must last, at the burn the quota reads show, until its window refills or for this
+	// long. 0 turns the guard off.
+	GuardHorizon time.Duration
 }
 
 // Enabled reports whether requests are ever delayed.
@@ -39,7 +40,9 @@ const (
 	RunwayClear RunwayReason = "clear"
 	// RunwayShort: at full speed the pool runs dry within a week; requests run at Speed.
 	RunwayShort RunwayReason = "short"
-	// RunwayReserve: the accounts that can serve now hold less than the reserve.
+	// RunwayReserve: at the burn the quota reads show, what the usable accounts hold runs
+	// out before it refills (or within GuardHorizon), which slows requests more than the
+	// plan does.
 	RunwayReserve RunwayReason = "reserve"
 	// RunwayLearning: no account has spent enough of any window to size it yet.
 	RunwayLearning RunwayReason = "learning"
@@ -48,8 +51,8 @@ const (
 // RunwayStatus is a pool's runway and the throttle it sets.
 type RunwayStatus struct {
 	Reason RunwayReason
-	// Speed is the share of the forecast the pool can serve for a week; 1 when clear,
-	// 0 under the reserve guard, NaN while learning.
+	// Speed is the share of the forecast the pool can serve for a week, or of the burn
+	// under the guard; 1 when clear, NaN while learning.
 	Speed float64
 	// Delay is what a request waits now; 0 when throttling is off.
 	Delay time.Duration
@@ -148,7 +151,9 @@ type planGroup struct {
 type observedAccount struct {
 	windows map[quota.WindowID]quota.Window
 	sizes   map[quota.WindowID]float64
-	groups  []planGroup
+	// burns is the share of each window spent per hour, from the quota reads.
+	burns  map[quota.WindowID]float64
+	groups []planGroup
 	// usable: a candidate now, not cooling down.
 	usable bool
 }
@@ -157,8 +162,17 @@ type observedAccount struct {
 type sizedPool struct {
 	order   []planGroup
 	plans   map[quota.WindowID][]RunwayAccount
-	reserve float64
+	guard   map[quota.WindowID]*guardWindow
 	unsized []quota.WindowID
+}
+
+// guardWindow is one window across the pool, in units of the pool's median size for it,
+// so an error in every size alike cancels out.
+type guardWindow struct {
+	// room is what the usable accounts hold now; burn what the pool spent per hour.
+	room, burn float64
+	// refill is the soonest pending reset; zero when none.
+	refill time.Time
 }
 
 // providerRunwayLocked plans one provider's pool. The short window and the first long
@@ -181,8 +195,11 @@ func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, 
 		if plan.Speed < 1 {
 			status.Reason = RunwayShort
 		}
-		if i == 0 && cfg.Reserve > 0 && pool.reserve < cfg.Reserve.Hours()*f.Hour {
-			status.Reason, status.Speed = RunwayReserve, 0
+		if i == 0 {
+			speed, under := pool.guardSpeed(cfg.GuardHorizon, cfg.Margin, m.ledger.MeanSpeed(provider, now), now)
+			if under && speed < status.Speed {
+				status.Reason, status.Speed = RunwayReserve, speed
+			}
 		}
 		if i == 0 || status.Speed < out.Speed {
 			out = status
@@ -220,6 +237,7 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 		obs := observedAccount{
 			windows: map[quota.WindowID]quota.Window{routing.Short: short},
 			sizes:   map[quota.WindowID]float64{},
+			burns:   map[quota.WindowID]float64{},
 			usable:  i < len(candidates),
 		}
 		complete := true
@@ -241,8 +259,12 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 		}
 		index := auth.EnsureIndex()
 		for id, w := range obs.windows {
+			m.ledger.Observe(index, w)
 			if units, sized := m.ledger.Capacity(index, w, now); sized {
 				obs.sizes[id] = units
+			}
+			if burn, known := m.ledger.Burn(index, id, now); known {
+				obs.burns[id] = burn
 			}
 		}
 		out = append(out, obs)
@@ -265,9 +287,9 @@ func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 	for id, values := range estimates {
 		medians[id] = medianOf(values)
 	}
-	out := sizedPool{plans: map[quota.WindowID][]RunwayAccount{}}
+	out := sizedPool{plans: map[quota.WindowID][]RunwayAccount{}, guard: map[quota.WindowID]*guardWindow{}}
 	for _, obs := range accounts {
-		room := math.Inf(1)
+		guarded := map[quota.WindowID]bool{}
 		for _, group := range obs.groups {
 			var windows []RunwayWindow
 			for _, id := range group.windows {
@@ -285,7 +307,10 @@ func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 				}
 				w := runwayWindowOf(obs.windows[id], units, now)
 				windows = append(windows, w)
-				room = min(room, w.Remaining)
+				if !guarded[id] {
+					guarded[id] = true
+					out.guard[id] = out.guard[id].add(w, units/median, obs.burns[id], obs.usable)
+				}
 			}
 			if len(windows) == 0 {
 				continue
@@ -295,11 +320,50 @@ func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 			}
 			out.plans[group.demand] = append(out.plans[group.demand], RunwayAccount{Windows: windows})
 		}
-		if obs.usable && room > 0 && !math.IsInf(room, 1) {
-			out.reserve += room
-		}
 	}
 	return out
+}
+
+// add counts one account's window w, sized relative to the pool's median.
+func (g *guardWindow) add(w RunwayWindow, rel, burn float64, usable bool) *guardWindow {
+	if g == nil {
+		g = &guardWindow{}
+	}
+	if usable {
+		g.room += w.Remaining / w.Capacity * rel
+	}
+	g.burn += burn * rel
+	if !w.ResetAt.IsZero() && (g.refill.IsZero() || w.ResetAt.Before(g.refill)) {
+		g.refill = w.ResetAt
+	}
+	return g
+}
+
+// guardSpeed is the guard (ThrottleConfig.GuardHorizon). It needs no window size: for
+// each window, the share the usable accounts hold over the share the pool burns per hour
+// (undone by the speed it ran at, inflated by margin) is how long they last. When that
+// is shorter than the time to the window's refill, capped at horizon, under is true and
+// speed is the share of the burn that lasts until then; the lowest over the windows wins.
+func (p sizedPool) guardSpeed(horizon time.Duration, margin, speedNow float64, now time.Time) (float64, bool) {
+	if horizon <= 0 {
+		return 0, false
+	}
+	speed, under := 1.0, false
+	for _, g := range p.guard {
+		if g.burn <= 0 {
+			continue
+		}
+		burn := g.burn / max(speedNow, 1e-3) * (1 + margin)
+		lasts := g.room / burn
+		until := horizon
+		if !g.refill.IsZero() {
+			until = min(until, max(g.refill.Sub(now), time.Minute))
+		}
+		if lasts < until.Hours() {
+			speed, under = min(speed, lasts/until.Hours()), true
+		}
+	}
+	return speed, under
 }
 
 // runwayWindowOf sizes an observed window; a reset that has passed counts as refilled.
@@ -330,7 +394,7 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 		speed = float64(cycle) / float64(cycle+status.Delay)
 	}
 	for _, provider := range providers {
-		m.ledger.SetSpeed(provider, speed)
+		m.ledger.SetSpeed(provider, speed, now)
 	}
 	if status.Delay <= 0 {
 		return nil

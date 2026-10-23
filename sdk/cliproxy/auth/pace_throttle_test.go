@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -125,18 +126,83 @@ func TestExecuteWaitsOnceSoThePoolDoesNotRunDry(t *testing.T) {
 	}
 }
 
-func TestExecuteWaitsTheMaximumUnderTheReserve(t *testing.T) {
+func TestExecuteSlowsSoTheBurnLastsUntilTheRefill(t *testing.T) {
 	guarded := throttleOn
-	guarded.Reserve = 2 * time.Hour
+	guarded.GuardHorizon = 12 * time.Hour
 	manager, recorder := newThrottledManager(t, guarded, shortScenario)
+	// 40 min ago the 5-hour window was 30 % used, now 50 %: 0.3 an hour, 0.345 with the
+	// margin, so the 50 % left lasts 1.45 h; it refills in 2.5 h.
+	auth := manager.auths["throttle-"+t.Name()]
+	manager.ledger.Observe(auth.EnsureIndex(), quota.Window{ID: quota.FiveHour, Remaining: 0.7, ResetAt: time.Now().Add(150 * time.Minute), Length: fiveHour, ObservedAt: time.Now().Add(-40 * time.Minute)})
 	if err := execute(t, manager); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if len(recorder.waits) != 1 || recorder.waits[0] != guarded.MaxDelay {
-		t.Fatalf("waits = %v; want one of max-delay", recorder.waits)
+	r := manager.RankCandidates(context.Background(), "claude", "claude-opus-5-5").Runway
+	if want := 0.5 / 0.345 / 2.5; r == nil || r.Reason != RunwayReserve || math.Abs(r.Speed-want) > 0.01 {
+		t.Fatalf("runway = %+v; want the guard at about %.2f", r, want)
 	}
-	if r := manager.RankCandidates(context.Background(), "claude", "claude-opus-5-5").Runway; r == nil || r.Reason != RunwayReserve || r.Speed != 0 {
-		t.Fatalf("runway = %+v; want reserve at speed 0", r)
+	want := time.Duration(float64(10*time.Second) * (1/r.Speed - 1))
+	if len(recorder.waits) != 1 || (recorder.waits[0]-want).Abs() > time.Second {
+		t.Fatalf("waits = %v; want one of about %s", recorder.waits, want)
+	}
+}
+
+func TestGuardSpeed(t *testing.T) {
+	refill := func(in time.Duration) time.Time { return paceNow.Add(in) }
+	for _, tc := range []struct {
+		name    string
+		guard   map[quota.WindowID]*guardWindow
+		horizon time.Duration
+		speed   float64
+		under   bool
+	}{
+		{"off", map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.1, burn: 1, refill: refill(time.Hour)}}, 0, 0, false},
+		{"no burn", map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.1, refill: refill(time.Hour)}}, 12 * time.Hour, 1, false},
+		// 0.5 at 0.25 an hour lasts 2 h; the refill is in 1 h.
+		{"lasts until the refill", map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.5, burn: 0.25, refill: refill(time.Hour)}}, 12 * time.Hour, 1, false},
+		// The same room must last 4 h: half the burn.
+		{"refill later", map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.5, burn: 0.25, refill: refill(4 * time.Hour)}}, 12 * time.Hour, 0.5, true},
+		// The 7-day refill is days away; the horizon caps it at 12 h.
+		{"horizon", map[quota.WindowID]*guardWindow{quota.SevenDay: {room: 0.06, burn: 0.01, refill: refill(80 * time.Hour)}}, 12 * time.Hour, 0.5, true},
+		{"no refill pending", map[quota.WindowID]*guardWindow{quota.SevenDay: {room: 0.06, burn: 0.01}}, 12 * time.Hour, 0.5, true},
+		{"empty", map[quota.WindowID]*guardWindow{quota.FiveHour: {burn: 0.2, refill: refill(time.Hour)}}, 12 * time.Hour, 0, true},
+		{"tightest window wins", map[quota.WindowID]*guardWindow{
+			quota.FiveHour: {room: 0.5, burn: 0.25, refill: refill(4 * time.Hour)},
+			quota.SevenDay: {room: 0.03, burn: 0.01, refill: refill(80 * time.Hour)},
+		}, 12 * time.Hour, 0.25, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			speed, under := sizedPool{guard: tc.guard}.guardSpeed(tc.horizon, 0, 1, paceNow)
+			if under != tc.under || (under && math.Abs(speed-tc.speed) > 1e-9) {
+				t.Fatalf("guardSpeed = %v, %v; want %v, %v", speed, under, tc.speed, tc.under)
+			}
+		})
+	}
+	// The burn is undone by the speed it ran at and inflated by the margin.
+	pool := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: {room: 0.5, burn: 0.125, refill: refill(4 * time.Hour)}}}
+	if speed, _ := pool.guardSpeed(12*time.Hour, 0.25, 0.5, paceNow); math.Abs(speed-0.4) > 1e-9 {
+		t.Fatalf("speed = %v; want 0.5 / (0.125 / 0.5 × 1.25) / 4 = 0.4", speed)
+	}
+}
+
+func TestGuardIgnoresAGlobalSizeError(t *testing.T) {
+	// Every account sized twice too large: room and burn both count in median sizes, so
+	// the guard does not change.
+	window := func(units float64) RunwayWindow {
+		return RunwayWindow{ID: quota.FiveHour, Remaining: 0.4 * units, Capacity: units, ResetAt: paceNow.Add(3 * time.Hour), Length: fiveHour}
+	}
+	speeds := []float64{}
+	for _, scale := range []float64{1, 2} {
+		var g *guardWindow
+		for _, units := range []float64{100, 200} {
+			sized := units * scale
+			g = g.add(window(sized), sized/(150*scale), 0.2, true)
+		}
+		speed, _ := sizedPool{guard: map[quota.WindowID]*guardWindow{quota.FiveHour: g}}.guardSpeed(12*time.Hour, 0, 1, paceNow)
+		speeds = append(speeds, speed)
+	}
+	if math.Abs(speeds[0]-speeds[1]) > 1e-12 || speeds[0] >= 1 {
+		t.Fatalf("speeds = %v; want the same, under 1", speeds)
 	}
 }
 

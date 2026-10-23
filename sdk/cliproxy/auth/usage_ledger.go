@@ -18,6 +18,10 @@ const (
 	ledgerSessionGap = 10 * time.Minute
 	// ledgerCycleSpan is how far back the turn-to-turn gap is averaged.
 	ledgerCycleSpan = 30 * time.Minute
+	// burnSpan is how far back the guard reads a window's burn from the quota reads.
+	burnSpan = time.Hour
+	// minBurnSpan is the shortest span of reads a burn is taken from.
+	minBurnSpan = 30 * time.Minute
 	// minCapacityEvidence is the share of a window that must have been spent since the
 	// capacity anchor before the units spent say how large the window is. Header
 	// utilizations are whole percents.
@@ -41,6 +45,21 @@ type UsageLedger struct {
 	anchors map[ledgerKey]capacityAnchor
 	// sized is each account window's latest estimate, kept across its resets.
 	sized map[ledgerKey]float64
+	// observed is each account window's recent share used, as the quota reads show it.
+	observed map[ledgerKey][]shareObservation
+	// speedLog is each provider's recent speeds, one sample a minute at most.
+	speedLog map[string][]speedSample
+}
+
+type shareObservation struct {
+	at      time.Time
+	used    float64
+	resetAt time.Time
+}
+
+type speedSample struct {
+	at    time.Time
+	speed float64
 }
 
 var _ coreusage.Plugin = (*UsageLedger)(nil)
@@ -77,6 +96,8 @@ func NewUsageLedger(now time.Time) *UsageLedger {
 		last:     map[string]time.Time{},
 		anchors:  map[ledgerKey]capacityAnchor{},
 		sized:    map[ledgerKey]float64{},
+		observed: map[ledgerKey][]shareObservation{},
+		speedLog: map[string][]speedSample{},
 	}
 }
 
@@ -167,10 +188,99 @@ func series(m map[ledgerKey]*minuteSeries, key ledgerKey) *minuteSeries {
 }
 
 // SetSpeed records the share of its unthrottled rate provider runs at now.
-func (l *UsageLedger) SetSpeed(provider string, speed float64) {
+func (l *UsageLedger) SetSpeed(provider string, speed float64, now time.Time) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.speeds[strings.ToLower(strings.TrimSpace(provider))] = speed
+	l.speeds[provider] = speed
+	log := l.speedLog[provider]
+	if n := len(log); n > 0 && now.Sub(log[n-1].at) < time.Minute {
+		log[n-1].speed = speed
+	} else {
+		log = append(log, speedSample{at: now, speed: speed})
+	}
+	// The last sample before the span still says what speed the span started at.
+	cut := 0
+	for cut+1 < len(log) && !log[cut+1].at.After(now.Add(-burnSpan)) {
+		cut++
+	}
+	l.speedLog[provider] = log[cut:]
+}
+
+// MeanSpeed is provider's speed averaged over the time of the last burnSpan: each sample
+// holds until the next, and before the first one the provider ran at full speed.
+func (l *UsageLedger) MeanSpeed(provider string, now time.Time) float64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	from := now.Add(-burnSpan)
+	at, speed, weighted := from, 1.0, 0.0
+	for _, s := range l.speedLog[strings.ToLower(strings.TrimSpace(provider))] {
+		if s.at.After(at) {
+			weighted += speed * s.at.Sub(at).Hours()
+			at = s.at
+		}
+		speed = s.speed
+	}
+	weighted += speed * now.Sub(at).Hours()
+	return weighted / burnSpan.Hours()
+}
+
+// Observe records the share of w used on the account with authIndex, as of w.ObservedAt.
+func (l *UsageLedger) Observe(authIndex string, w quota.Window) {
+	key := ledgerKey{authIndex, w.ID}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	log := l.observed[key]
+	if n := len(log); n > 0 && !w.ObservedAt.After(log[n-1].at) {
+		return
+	}
+	log = append(log, shareObservation{at: w.ObservedAt, used: 1 - w.Remaining, resetAt: w.ResetAt})
+	l.observed[key] = pruneBefore(log, w.ObservedAt.Add(-burnSpan), func(o shareObservation) time.Time { return o.at })
+}
+
+// Burn is the share of window id per hour the account with authIndex spent over the last
+// burnSpan, from the quota reads alone: no window size is involved. ok is false while the
+// reads span less than minBurnSpan.
+func (l *UsageLedger) Burn(authIndex string, id quota.WindowID, now time.Time) (float64, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var first, last *shareObservation
+	for i, o := range l.observed[ledgerKey{authIndex, id}] {
+		if o.at.Before(now.Add(-burnSpan)) {
+			continue
+		}
+		if first == nil {
+			first = &l.observed[ledgerKey{authIndex, id}][i]
+		}
+		last = &l.observed[ledgerKey{authIndex, id}][i]
+	}
+	if first == nil || last.at.Sub(first.at) < minBurnSpan {
+		return 0, false
+	}
+	spent := last.used - first.used
+	if !sameWindow(last.resetAt, first.resetAt) {
+		// The window reset in between: what is used now was all spent since.
+		spent = last.used
+	}
+	return max(spent, 0) / last.at.Sub(first.at).Hours(), true
+}
+
+// sameWindow reports whether two reports of a window's reset are the same window: quota
+// reads and response headers give the same reset at different precision.
+func sameWindow(a, b time.Time) bool {
+	if a.IsZero() || b.IsZero() {
+		return a.IsZero() == b.IsZero()
+	}
+	return a.Sub(b).Abs() < time.Minute
+}
+
+// pruneBefore drops the leading items older than cut.
+func pruneBefore[T any](items []T, cut time.Time, at func(T) time.Time) []T {
+	i := 0
+	for i < len(items) && at(items[i]).Before(cut) {
+		i++
+	}
+	return items[i:]
 }
 
 // Forecast is provider's demand on window: the last hour for the next hour, the last
@@ -239,7 +349,7 @@ func (l *UsageLedger) estimateLocked(key ledgerKey, w quota.Window, now time.Tim
 	used := 1 - w.Remaining
 	anchor, ok := l.anchors[key]
 	switch {
-	case !ok || !anchor.resetAt.Equal(w.ResetAt):
+	case !ok || !sameWindow(anchor.resetAt, w.ResetAt):
 		if start := w.ResetAt.Add(-w.Length); !start.Before(l.since) {
 			anchor = capacityAnchor{resetAt: w.ResetAt, at: start}
 		} else {
