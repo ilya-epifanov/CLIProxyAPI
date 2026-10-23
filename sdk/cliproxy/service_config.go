@@ -60,6 +60,7 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 			Throttle: coreauth.ThrottleConfig{
 				MaxDelay:     cfg.Routing.Pace.Throttle.MaxDelay,
 				Margin:       cfg.Routing.Pace.Throttle.MarginOrDefault(),
+				Reserve:      cfg.Routing.Pace.Throttle.ReserveOrDefault(),
 				GuardHorizon: cfg.Routing.Pace.Throttle.GuardHorizonOrDefault(),
 			},
 		}
