@@ -225,7 +225,8 @@ func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, 
 
 // observePoolLocked collects the accounts that serve model for provider, cooling-down
 // ones included because they come back at their reset, with their windows and sizes.
-// The caller holds m.mu.
+// An account needs every long window observed; the short one it may lack. The caller
+// holds m.mu.
 func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) []observedAccount {
 	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
 	pool := candidates
@@ -245,15 +246,16 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 		if !ok {
 			continue
 		}
-		short, hasShort := snapshot.Window(routing.Short)
-		if !hasShort {
-			continue
-		}
 		obs := observedAccount{
-			windows: map[quota.WindowID]quota.Window{routing.Short: short},
+			windows: map[quota.WindowID]quota.Window{},
 			sizes:   map[quota.WindowID]float64{},
 			burns:   map[quota.WindowID]float64{},
 			usable:  i < len(candidates),
+		}
+		// An account without the short window is not capped by it, as in the selector.
+		short, hasShort := snapshot.Window(routing.Short)
+		if hasShort {
+			obs.windows[routing.Short] = short
 		}
 		complete := true
 		for j, slot := range routing.Long {
@@ -264,7 +266,7 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 			}
 			obs.windows[w.ID] = w
 			group := planGroup{demand: w.ID, windows: []quota.WindowID{w.ID}}
-			if j == 0 {
+			if j == 0 && hasShort {
 				group.windows = []quota.WindowID{routing.Short, w.ID}
 			}
 			obs.groups = append(obs.groups, group)
@@ -290,12 +292,17 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 // sizePool turns observed accounts into runway accounts. An account without a size, or
 // sized far above its pool (most likely a reset was spent while the gateway was not
 // watching, and oversizing would hide a dry pool), counts as the pool's median. A window
-// nobody has sized is left out; a plan left with no window is dropped.
+// nobody has sized is left out; a plan left with no window is dropped. A window some
+// accounts lack is not guarded: they keep serving when it runs out.
 func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 	estimates := map[quota.WindowID][]float64{}
+	holders := map[quota.WindowID]int{}
 	for _, obs := range accounts {
 		for id, units := range obs.sizes {
 			estimates[id] = append(estimates[id], units)
+		}
+		for id := range obs.windows {
+			holders[id]++
 		}
 	}
 	medians := map[quota.WindowID]float64{}
@@ -334,6 +341,11 @@ func sizePool(accounts []observedAccount, now time.Time) sizedPool {
 				out.order = append(out.order, group)
 			}
 			out.plans[group.demand] = append(out.plans[group.demand], RunwayAccount{Windows: windows})
+		}
+	}
+	for id := range out.guard {
+		if holders[id] < len(accounts) {
+			delete(out.guard, id)
 		}
 	}
 	return out
