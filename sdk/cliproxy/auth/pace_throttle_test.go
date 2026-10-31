@@ -255,6 +255,33 @@ func TestRunwayPlansOnTheShortWindowWhileTheLongOneIsUnsized(t *testing.T) {
 	}
 }
 
+func TestRunwayCountsAnAccountWithoutTheShortWindow(t *testing.T) {
+	// The first account's 5-hour window cannot take the next hour alone, but a second
+	// account has no 5-hour limit and a week to spare: the pool is clear, unguarded on
+	// the 5-hour window.
+	guarded := throttleOn
+	guarded.GuardHorizon = 12 * time.Hour
+	manager, recorder := newThrottledManager(t, guarded, shortScenario)
+	selector, _ := paceSelectorOf(manager.selector)
+	auth := &Auth{ID: "no-short-" + t.Name(), Provider: "claude", Status: StatusActive}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-opus-5-5"}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+		t.Fatal(errRegister)
+	}
+	now := time.Now()
+	selector.view.(*quota.Cache).PutProbe(auth.ID, []quota.Window{
+		{ID: quota.SevenDay, Remaining: 0.95, ResetAt: now.Add(84 * time.Hour), Length: week, ObservedAt: now, Source: quota.SourceProbe},
+	})
+	if err := execute(t, manager); err != nil || len(recorder.waits) != 0 {
+		t.Fatalf("err = %v, waits = %v; want no wait", err, recorder.waits)
+	}
+	r := manager.RankCandidates(context.Background(), "claude", "claude-opus-5-5").Runway
+	if r == nil || r.Reason != RunwayClear || r.Accounts != 2 {
+		t.Fatalf("runway = %+v; want clear over 2 accounts", r)
+	}
+}
+
 func TestRunwaySizesAnOutlierAsThePoolMedian(t *testing.T) {
 	// One account looks four times the size of the others, as after a reset spent while
 	// the gateway was down; sized as the median, the pool runs short.
