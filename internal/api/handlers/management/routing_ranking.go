@@ -58,8 +58,14 @@ type runwayJSON struct {
 	Reason string `json:"reason"`
 	// Speed is the share of the forecast the pool serves for a week; null while learning.
 	Speed *float64 `json:"speed"`
-	// DelayMS is the delay a request for this pool gets now; 0 when the throttle is off.
+	// DelayMS is the delay a request for this pool gets now, the override applied; 0
+	// when the throttle is off.
 	DelayMS int64 `json:"delay_ms"`
+	// ComputedDelayMS is the delay without the override.
+	ComputedDelayMS int64 `json:"computed_delay_ms"`
+	// Override is null unless the operator replaced the computed speed; reason and speed
+	// stay the computed ones.
+	Override *throttleOverrideJSON `json:"override"`
 	// DryAt is when the pool runs dry at full speed; null when it lasts a week.
 	DryAt    *time.Time      `json:"dry_at"`
 	Window   *quota.WindowID `json:"window"`
@@ -104,14 +110,18 @@ func (h *Handler) GetRoutingRanking(c *gin.Context) {
 		}
 		if r := ranking.Runway; r != nil {
 			pool.Runway = &runwayJSON{
-				Reason:        string(r.Reason),
-				Speed:         floatPtr(r.Speed),
-				DelayMS:       r.Delay.Milliseconds(),
-				DryAt:         timePtr(r.DryAt),
-				Accounts:      r.Accounts,
-				DemandPerHour: r.Demand,
-				MaxDelayMS:    r.Config.MaxDelay.Milliseconds(),
-				Unsized:       append([]quota.WindowID{}, r.Unsized...),
+				Reason:          string(r.Reason),
+				Speed:           floatPtr(r.Speed),
+				DelayMS:         r.Delay.Milliseconds(),
+				ComputedDelayMS: r.ComputedDelay.Milliseconds(),
+				DryAt:           timePtr(r.DryAt),
+				Accounts:        r.Accounts,
+				DemandPerHour:   r.Demand,
+				MaxDelayMS:      r.Config.MaxDelay.Milliseconds(),
+				Unsized:         append([]quota.WindowID{}, r.Unsized...),
+			}
+			if r.Override != nil {
+				pool.Runway.Override = throttleOverrideFor(*r.Override)
 			}
 			if r.Window != "" {
 				window := r.Window

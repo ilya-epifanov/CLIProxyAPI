@@ -16,13 +16,15 @@ const errConfigReadOnly = "config_read_only"
 // so a new route is refused on a read-only config until it is listed here.
 // The deprecated /v0/management routes are not guarded.
 var nonConfigMutations = map[string]struct{}{
-	"POST /v8/management/requests/api-call":                 {},
-	"POST /v8/management/routing/cooldown/reset":            {},
-	"POST /v8/management/routing/model-definitions/refresh": {},
-	"POST /v8/management/models/refresh":                    {},
-	"DELETE /v8/management/observability/logs":              {},
-	"POST /v8/management/credentials":                       {},
-	"DELETE /v8/management/credentials":                     {},
+	"POST /v8/management/requests/api-call":                      {},
+	"POST /v8/management/routing/cooldown/reset":                 {},
+	"POST /v8/management/routing/model-definitions/refresh":      {},
+	"POST /v8/management/models/refresh":                         {},
+	"PUT /v8/management/routing/throttle/overrides/:provider":    {},
+	"DELETE /v8/management/routing/throttle/overrides/:provider": {},
+	"DELETE /v8/management/observability/logs":                   {},
+	"POST /v8/management/credentials":                            {},
+	"DELETE /v8/management/credentials":                          {},
 	// The config API key branch of the status toggle writes the config; PatchAuthFileStatus guards it itself.
 	"PATCH /v8/management/credentials/status": {},
 	"PATCH /v8/management/credentials/fields": {},

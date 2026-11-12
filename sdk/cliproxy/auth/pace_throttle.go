@@ -60,6 +60,11 @@ type RunwayStatus struct {
 	Speed float64
 	// Delay is what a request waits now; 0 when throttling is off.
 	Delay time.Duration
+	// ComputedDelay is what a request would wait without Override.
+	ComputedDelay time.Duration
+	// Override replaces Speed for the delay when the operator set one; Reason, Speed and
+	// the rest stay what the plan and the guard computed.
+	Override *ThrottleOverride
 	// DryAt is when the pool runs dry at full speed; zero when it lasts a week.
 	DryAt time.Time
 	// Window is the long window of the plan that limits the speed.
@@ -88,6 +93,16 @@ func paceSelectorOf(selector Selector) (*PaceSelector, bool) {
 	return pace, ok && pace != nil
 }
 
+// ThrottleOverrides returns the per-pool speeds that replace the computed throttle.
+func (m *Manager) ThrottleOverrides() *ThrottleOverrides {
+	return m.throttleOverrides
+}
+
+// SetThrottleOverrides installs stored overrides; the service calls it before it serves requests.
+func (m *Manager) SetThrottleOverrides(overrides *ThrottleOverrides) {
+	m.throttleOverrides = overrides
+}
+
 // Ledger returns the usage ledger the throttle plans with. The service registers it as
 // a usage plugin and seeds it from the usage store.
 func (m *Manager) Ledger() *UsageLedger {
@@ -105,37 +120,58 @@ func (m *Manager) runwayLocked(ctx context.Context, providers []string, model st
 	var out RunwayStatus
 	for i, provider := range providers {
 		status := m.providerRunwayLocked(ctx, pace, provider, model, now)
+		if o, set := m.throttleOverrides.Get(provider); set {
+			status.Override = &o
+		}
 		if i == 0 || runwayTighter(status, out) {
 			out = status
 		}
 	}
 	out.Config = cfg
 	if cfg.Enabled() {
-		out.Delay = m.throttleDelay(out, now)
+		out.ComputedDelay = m.throttleDelay(cfg, out.Speed, out.Reason != RunwayLearning, now)
+		out.Delay = out.ComputedDelay
+		if o := out.Override; o != nil {
+			out.Delay = m.throttleDelay(cfg, o.Speed, true, now)
+		}
 	}
 	return out, true
 }
 
+// RunSpeed returns the speed requests run at: the override when one is set, else the
+// computed speed; ok is false while learning, when nothing is delayed.
+func (s RunwayStatus) RunSpeed() (speed float64, ok bool) {
+	if s.Override != nil {
+		return s.Override.Speed, true
+	}
+	if s.Reason == RunwayLearning {
+		return math.NaN(), false
+	}
+	return s.Speed, true
+}
+
 // runwayTighter reports whether a throttles harder than b; learning throttles least.
 func runwayTighter(a, b RunwayStatus) bool {
-	if a.Reason == RunwayLearning || b.Reason == RunwayLearning {
-		return b.Reason == RunwayLearning && a.Reason != RunwayLearning
+	speedA, okA := a.RunSpeed()
+	speedB, okB := b.RunSpeed()
+	if !okA || !okB {
+		return okA && !okB
 	}
-	return a.Speed < b.Speed
+	return speedA < speedB
 }
 
 // throttleDelay turns a speed into a wait: an agent loop of turns cycle long runs at
-// cycle / (cycle + delay). Without a turn length it waits MaxDelay.
-func (m *Manager) throttleDelay(status RunwayStatus, now time.Time) time.Duration {
-	cfg := status.Config
-	if status.Reason == RunwayLearning || status.Speed >= 1 {
+// cycle / (cycle + delay). Without a turn length it waits MaxDelay. A pool still
+// learning (sized false) is not delayed.
+func (m *Manager) throttleDelay(cfg ThrottleConfig, speed float64, sized bool, now time.Time) time.Duration {
+	if !sized || speed >= 1 {
 		return 0
 	}
 	cycle, ok := m.ledger.Cycle(now)
-	if !ok || status.Speed <= 0 {
+	if !ok || speed <= 0 {
 		return cfg.MaxDelay
 	}
-	delay := time.Duration(float64(cycle) * (1/status.Speed - 1))
+	delay := time.Duration(float64(cycle) * (1/speed - 1))
 	return min(delay, cfg.MaxDelay)
 }
 
@@ -442,6 +478,10 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 
 // throttleLogMessage describes a delayed request's runway.
 func throttleLogMessage(status RunwayStatus, now time.Time) string {
+	if o := status.Override; o != nil {
+		return fmt.Sprintf("pace throttle: delaying request %s at the override speed %.2f (computed: %s, wait %s)",
+			status.Delay.Round(time.Second), o.Speed, status.Reason, status.ComputedDelay.Round(time.Second))
+	}
 	msg := fmt.Sprintf("pace throttle: delaying request %s so the pool does not run dry (speed %.2f on %s, %d accounts, demand %.1f units/h",
 		status.Delay.Round(time.Second), status.Speed, status.Window, status.Accounts, status.Demand)
 	if !status.DryAt.IsZero() {
