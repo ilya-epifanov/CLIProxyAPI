@@ -19,6 +19,8 @@ const (
 	usageMetricsPluginName = "usage-metrics"
 	paceLedgerPluginName   = "pace-ledger"
 	usageStoreFileName     = "usage.db"
+	// throttleOverridesFileName holds the pace throttle's per-pool overrides.
+	throttleOverridesFileName = "throttle-overrides.json"
 	// paceLedgerSeedSpan is how much stored history the pace throttle's ledger reads at start.
 	paceLedgerSeedSpan = 7 * 24 * time.Hour
 )
@@ -81,6 +83,25 @@ func seedPaceLedger(ctx context.Context, store *usagestore.Store, ledger *coreau
 	}
 	ledger.Seed(covered, entries)
 	log.Infof("pace throttle: read %d stored requests since %s", len(entries), covered.UTC().Format(time.RFC3339))
+}
+
+// loadThrottleOverrides installs the stored throttle overrides, so a restart keeps them.
+// It runs before the service serves requests. A file it cannot read stops the start,
+// since requests would run at a speed the operator did not choose.
+func (s *Service) loadThrottleOverrides() error {
+	if s.coreManager == nil {
+		return nil
+	}
+	path := throttleOverridesFileName
+	if dir := util.WritablePath(); dir != "" {
+		path = filepath.Join(dir, throttleOverridesFileName)
+	}
+	overrides, err := coreauth.LoadThrottleOverrides(path)
+	if err != nil {
+		return err
+	}
+	s.coreManager.SetThrottleOverrides(overrides)
+	return nil
 }
 
 // usageStorePath resolves an empty path to usage.db in the writable path, or
