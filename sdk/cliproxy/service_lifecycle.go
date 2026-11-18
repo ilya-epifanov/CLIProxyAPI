@@ -145,6 +145,7 @@ func (s *Service) Run(ctx context.Context) error {
 		serverOptions = append(append([]api.ServerOption(nil), serverOptions...), api.WithUsageStore(s.usageStore))
 	}
 	s.server = api.NewServer(cfg, s.coreManager, s.accessManager, s.configPath, serverOptions...)
+	s.startQuotaProbes(ctx)
 	s.syncPluginRuntimeConfig(ctx)
 	if homeEnabled {
 		s.configRuntimeMu.Lock()
