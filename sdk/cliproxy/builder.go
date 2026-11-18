@@ -18,6 +18,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
+	log "github.com/sirupsen/logrus"
 )
 
 // Builder constructs a Service instance with customizable providers.
@@ -253,6 +254,12 @@ func (b *Builder) Build() (*Service, error) {
 	if errValidate := b.cfg.ValidateCredentialWeights(); errValidate != nil {
 		return nil, fmt.Errorf("cliproxy: validate credential weights: %w", errValidate)
 	}
+	if errValidate := b.cfg.Routing.Pace.Validate(); errValidate != nil {
+		return nil, fmt.Errorf("cliproxy: %w", errValidate)
+	}
+	if warning := b.cfg.Routing.Pace.Throttle.Warning(); warning != "" {
+		log.Warn(warning)
+	}
 	b.cfg.NormalizePluginsConfig()
 	if errResolvePluginsDir := b.cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && b.cfg.Plugins.Enabled {
 		return nil, fmt.Errorf("cliproxy: %w", errResolvePluginsDir)
@@ -294,7 +301,7 @@ func (b *Builder) Build() (*Service, error) {
 	}
 	accessManager.SetProviders(sdkaccess.RegisteredProviders())
 
-	// The quota cache is filled by the prober and outlives config reloads.
+	// The quota cache outlives selector rebuilds: the prober fills it, selectors read it.
 	quotaCache := quota.NewCache()
 	coreManager := b.coreManager
 	cooldownStateStore := b.cooldownStateStore
@@ -311,7 +318,7 @@ func (b *Builder) Build() (*Service, error) {
 		}
 
 		routingState := normalizedRoutingRuntimeState(b.cfg)
-		coreManager = coreauth.NewManager(tokenStore, newRoutingSelector(routingState), nil)
+		coreManager = coreauth.NewManager(tokenStore, newRoutingSelector(routingState, quotaCache), nil)
 		appliedRoutingState = &routingState
 	}
 	// Attach a default RoundTripper provider so providers can opt-in per-auth transports.

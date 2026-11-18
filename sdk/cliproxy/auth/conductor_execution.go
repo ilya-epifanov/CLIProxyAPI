@@ -290,6 +290,9 @@ func (m *Manager) Execute(ctx context.Context, providers []string, req cliproxye
 		}
 		return cliproxyexecutor.Response{}, markContinuityTerminatedError(termErr)
 	}
+	if errThrottle := m.throttle(ctx, normalized, retryModel); errThrottle != nil {
+		return cliproxyexecutor.Response{}, errThrottle
+	}
 	for attempt := 0; ; attempt++ {
 		if m.continuityDeadlineExceeded(continuitySession) {
 			continuitySession.budgetExhausted = true
@@ -536,6 +539,11 @@ func (m *Manager) ExecuteStream(ctx context.Context, providers []string, req cli
 		return nil, termErr
 	}
 	_, shareStreamAttempts := m.canRunCodexContinuity(ctx, normalized)
+	if !m.HomeEnabled() {
+		if errThrottle := m.throttle(ctx, normalized, retryModel); errThrottle != nil {
+			return nil, errThrottle
+		}
+	}
 	attempt := 0
 	if shareStreamAttempts {
 		attempt = continuitySession.codexAttemptsUsed
