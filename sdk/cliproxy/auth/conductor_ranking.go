@@ -33,15 +33,6 @@ type Ranking struct {
 	Runway *RunwayStatus
 }
 
-// rankerOf returns the Ranker behind selector, looking through session affinity.
-func rankerOf(selector Selector) (Ranker, bool) {
-	if affinity, ok := selector.(*SessionAffinitySelector); ok && affinity != nil {
-		selector = affinity.fallback
-	}
-	ranker, ok := selector.(Ranker)
-	return ranker, ok
-}
-
 // RankCandidates ranks the accounts of provider for model the way a cold pick would,
 // across all priority tiers. With model empty, only credential-wide blocks exclude an
 // account and long windows are those of a model without a scoped window.
@@ -58,14 +49,14 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
 	out.NotCandidates = notCandidates
 	selectionModels := m.selectionModelsLocked(selector, candidates, model)
-	if runway, ok := m.runwayLocked(ctx, []string{provider}, model, now); ok {
+	if runway, ok := m.runwayLocked([]string{provider}, model, now); ok {
 		out.Runway = &runway
 	}
 	m.mu.RUnlock()
 
 	sort.Slice(out.NotCandidates, func(i, j int) bool { return out.NotCandidates[i].Auth.ID < out.NotCandidates[j].Auth.ID })
 	ctx = withSelectionModels(ctx, selectionModels)
-	ranker, ranked := rankerOf(selector)
+	ranker, ranked := behindAffinity(selector).(Ranker)
 	out.Ranked = ranked
 
 	byTier := map[int][]*Auth{}

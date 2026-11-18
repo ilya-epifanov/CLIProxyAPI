@@ -24,7 +24,7 @@ func TestCostUnitsWeighsTokensByPrice(t *testing.T) {
 		UnclassifiedTokens: 500_000,
 	}
 	// 1 + 1 + 1 + 1 + 0.5
-	if got := CostUnits(b); math.Abs(got-4.5) > 1e-9 {
+	if got := CostUnits(b.Buckets()); math.Abs(got-4.5) > 1e-9 {
 		t.Fatalf("CostUnits = %v, want 4.5", got)
 	}
 }

@@ -38,16 +38,15 @@ type UsageLedger struct {
 	since    time.Time
 	accounts map[ledgerKey]*minuteSeries
 	demand   map[ledgerKey]*minuteSeries
-	// speeds is the share of its unthrottled rate each provider runs at now.
-	speeds  map[string]float64
-	last    map[string]time.Time // session → its latest request
-	gaps    []ledgerGap
-	anchors map[ledgerKey]capacityAnchor
+	last     map[string]time.Time // session → its latest request
+	gaps     []ledgerGap
+	anchors  map[ledgerKey]capacityAnchor
 	// sized is each account window's latest estimate, kept across its resets.
 	sized map[ledgerKey]float64
 	// observed is each account window's recent share used, as the quota reads show it.
 	observed map[ledgerKey][]shareObservation
-	// speedLog is each provider's recent speeds, one sample a minute at most.
+	// speedLog is each provider's recent speeds, one sample a minute at most; the last
+	// sample is the share of its unthrottled rate the provider runs at now.
 	speedLog map[string][]speedSample
 }
 
@@ -92,7 +91,6 @@ func NewUsageLedger(now time.Time) *UsageLedger {
 		since:    now,
 		accounts: map[ledgerKey]*minuteSeries{},
 		demand:   map[ledgerKey]*minuteSeries{},
-		speeds:   map[string]float64{},
 		last:     map[string]time.Time{},
 		anchors:  map[ledgerKey]capacityAnchor{},
 		sized:    map[ledgerKey]float64{},
@@ -120,7 +118,7 @@ func (l *UsageLedger) HandleUsage(ctx context.Context, record coreusage.Record) 
 		AuthIndex: strings.TrimSpace(resolved.AuthIndex),
 		Model:     resolved.Model,
 		SessionID: resolved.SessionID,
-		Units:     CostUnits(resolved.Detail.TokenBreakdown),
+		Units:     CostUnits(resolved.Detail.TokenBreakdown.Buckets()),
 	}, true)
 }
 
@@ -158,8 +156,8 @@ func (l *UsageLedger) Add(entry LedgerEntry, live bool) {
 		return
 	}
 	demand := entry.Units
-	if speed, ok := l.speeds[provider]; live && ok && speed > 0 {
-		demand /= speed
+	if log := l.speedLog[provider]; live && len(log) > 0 && log[len(log)-1].speed > 0 {
+		demand /= log[len(log)-1].speed
 	}
 	for _, window := range spentWindows(routing) {
 		if entry.AuthIndex != "" {
@@ -192,7 +190,6 @@ func (l *UsageLedger) SetSpeed(provider string, speed float64, now time.Time) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.speeds[provider] = speed
 	log := l.speedLog[provider]
 	if n := len(log); n > 0 && now.Sub(log[n-1].at) < time.Minute {
 		log[n-1].speed = speed

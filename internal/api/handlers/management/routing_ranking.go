@@ -65,7 +65,7 @@ type runwayJSON struct {
 	ComputedDelayMS int64 `json:"computed_delay_ms"`
 	// Override is null unless the operator replaced the computed speed; reason and speed
 	// stay the computed ones.
-	Override *throttleOverrideJSON `json:"override"`
+	Override *coreauth.ThrottleOverride `json:"override"`
 	// DryAt is when the pool runs dry at full speed; null when it lasts a week.
 	DryAt    *time.Time      `json:"dry_at"`
 	Window   *quota.WindowID `json:"window"`
@@ -114,14 +114,12 @@ func (h *Handler) GetRoutingRanking(c *gin.Context) {
 				Speed:           floatPtr(r.Speed),
 				DelayMS:         r.Delay.Milliseconds(),
 				ComputedDelayMS: r.ComputedDelay.Milliseconds(),
+				Override:        r.Override,
 				DryAt:           timePtr(r.DryAt),
 				Accounts:        r.Accounts,
 				DemandPerHour:   r.Demand,
 				MaxDelayMS:      r.Config.MaxDelay.Milliseconds(),
 				Unsized:         append([]quota.WindowID{}, r.Unsized...),
-			}
-			if r.Override != nil {
-				pool.Runway.Override = throttleOverrideFor(*r.Override)
 			}
 			if r.Window != "" {
 				window := r.Window

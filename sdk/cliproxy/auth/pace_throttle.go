@@ -84,12 +84,17 @@ func (s *PaceSelector) Throttle() ThrottleConfig {
 	return s.cfg.Throttle
 }
 
+// behindAffinity returns the selector session affinity wraps, or selector itself.
+func behindAffinity(selector Selector) Selector {
+	if affinity, ok := selector.(*SessionAffinitySelector); ok && affinity != nil {
+		return affinity.fallback
+	}
+	return selector
+}
+
 // paceSelectorOf returns the PaceSelector behind selector, looking through session affinity.
 func paceSelectorOf(selector Selector) (*PaceSelector, bool) {
-	if affinity, ok := selector.(*SessionAffinitySelector); ok && affinity != nil {
-		selector = affinity.fallback
-	}
-	pace, ok := selector.(*PaceSelector)
+	pace, ok := behindAffinity(selector).(*PaceSelector)
 	return pace, ok && pace != nil
 }
 
@@ -111,7 +116,7 @@ func (m *Manager) Ledger() *UsageLedger {
 
 // runwayLocked plans the runway of the pools behind providers for model, the tightest
 // provider deciding, or ok false when the strategy is not pace. The caller holds m.mu.
-func (m *Manager) runwayLocked(ctx context.Context, providers []string, model string, now time.Time) (RunwayStatus, bool) {
+func (m *Manager) runwayLocked(providers []string, model string, now time.Time) (RunwayStatus, bool) {
 	pace, ok := paceSelectorOf(m.selector)
 	if !ok || m.ledger == nil {
 		return RunwayStatus{}, false
@@ -119,7 +124,7 @@ func (m *Manager) runwayLocked(ctx context.Context, providers []string, model st
 	cfg := pace.Throttle()
 	var out RunwayStatus
 	for i, provider := range providers {
-		status := m.providerRunwayLocked(ctx, pace, provider, model, now)
+		status := m.providerRunwayLocked(pace, provider, model, now)
 		if o, set := m.throttleOverrides.Get(provider); set {
 			status.Override = &o
 		}
@@ -229,8 +234,8 @@ type guardWindow struct {
 // providerRunwayLocked plans one provider's pool. The short window and the first long
 // slot share all of the provider's demand, so they are planned together; a further long
 // slot (the Fable window) is spent only by its own models and is planned alone.
-func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) RunwayStatus {
-	pool := sizePool(m.observePoolLocked(ctx, pace, provider, model, now), now)
+func (m *Manager) providerRunwayLocked(pace *PaceSelector, provider, model string, now time.Time) RunwayStatus {
+	pool := sizePool(m.observePoolLocked(pace, provider, model, now), now)
 	if len(pool.order) == 0 {
 		return RunwayStatus{Reason: RunwayLearning, Speed: math.NaN()}
 	}
@@ -263,7 +268,7 @@ func (m *Manager) providerRunwayLocked(ctx context.Context, pace *PaceSelector, 
 // ones included because they come back at their reset, with their windows and sizes.
 // An account needs every long window observed; the short one it may lack. The caller
 // holds m.mu.
-func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, provider, model string, now time.Time) []observedAccount {
+func (m *Manager) observePoolLocked(pace *PaceSelector, provider, model string, now time.Time) []observedAccount {
 	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
 	pool := candidates
 	for _, nc := range notCandidates {
@@ -271,15 +276,15 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 			pool = append(pool, nc.Auth)
 		}
 	}
-	ctx = withSelectionModels(ctx, m.selectionModelsLocked(m.selector, pool, model))
+	selectionModels := m.selectionModelsLocked(m.selector, pool, model)
 	var out []observedAccount
 	for i, auth := range pool {
-		routing, tracked := quota.RoutingWindowsFor(auth.Provider, canonicalModelKey(selectionModelFromContext(ctx, auth, model)))
-		if !tracked {
-			continue
+		selectionModel, found := selectionModels[auth.ID]
+		if !found {
+			selectionModel = model
 		}
-		snapshot, ok := pace.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
-		if !ok {
+		windows, ok := pace.windowsOf(auth, selectionModel)
+		if !ok || !windows.Complete {
 			continue
 		}
 		obs := observedAccount{
@@ -289,26 +294,16 @@ func (m *Manager) observePoolLocked(ctx context.Context, pace *PaceSelector, pro
 			usable:  i < len(candidates),
 		}
 		// An account without the short window is not capped by it, as in the selector.
-		short, hasShort := snapshot.Window(routing.Short)
-		if hasShort {
-			obs.windows[routing.Short] = short
+		if windows.HasShort {
+			obs.windows[windows.Short.ID] = windows.Short
 		}
-		complete := true
-		for j, slot := range routing.Long {
-			w, found := snapshot.First(slot...)
-			if !found {
-				complete = false
-				break
-			}
+		for j, w := range windows.Long {
 			obs.windows[w.ID] = w
 			group := planGroup{demand: w.ID, windows: []quota.WindowID{w.ID}}
-			if j == 0 && hasShort {
-				group.windows = []quota.WindowID{routing.Short, w.ID}
+			if j == 0 && windows.HasShort {
+				group.windows = []quota.WindowID{windows.Short.ID, w.ID}
 			}
 			obs.groups = append(obs.groups, group)
-		}
-		if !complete {
-			continue
 		}
 		index := auth.EnsureIndex()
 		for id, w := range obs.windows {
@@ -448,7 +443,7 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	}
 	now := time.Now()
 	m.mu.RLock()
-	status, ok := m.runwayLocked(ctx, providers, model, now)
+	status, ok := m.runwayLocked(providers, model, now)
 	m.mu.RUnlock()
 	if !ok || !status.Config.Enabled() {
 		return nil
