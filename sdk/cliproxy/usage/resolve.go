@@ -93,3 +93,26 @@ func resolveOutcome(ctx context.Context, record Record) (bool, Failure) {
 	}
 	return true, fail
 }
+
+// TokenBuckets are the disjoint token counts of a TokenBreakdown, the six buckets
+// usage sinks count and price separately.
+type TokenBuckets struct {
+	Input        int64
+	CacheRead    int64
+	CacheWrite   int64
+	Output       int64
+	Reasoning    int64
+	Unclassified int64
+}
+
+// Buckets splits b into its disjoint token buckets.
+func (b TokenBreakdown) Buckets() TokenBuckets {
+	return TokenBuckets{
+		Input:        b.Input.UncachedTokens,
+		CacheRead:    b.Input.CacheReadTokens,
+		CacheWrite:   b.Input.CacheWriteTokens,
+		Output:       b.Output.NonReasoningTokens,
+		Reasoning:    b.Output.ReasoningTokens,
+		Unclassified: b.UnclassifiedTokens,
+	}
+}

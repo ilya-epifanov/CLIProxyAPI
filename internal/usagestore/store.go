@@ -251,7 +251,6 @@ type row struct {
 }
 
 func newRow(resolved coreusage.Resolved) row {
-	breakdown := resolved.Detail.TokenBreakdown
 	return row{
 		requestID:       resolved.RequestID,
 		at:              resolved.RequestedAt,
@@ -267,14 +266,7 @@ func newRow(resolved coreusage.Resolved) row {
 		statusCode:      resolved.Fail.StatusCode,
 		latency:         resolved.Latency,
 		ttft:            resolved.TTFT,
-		tokens: Tokens{
-			Input:        breakdown.Input.UncachedTokens,
-			CacheRead:    breakdown.Input.CacheReadTokens,
-			CacheWrite:   breakdown.Input.CacheWriteTokens,
-			Output:       breakdown.Output.NonReasoningTokens,
-			Reasoning:    breakdown.Output.ReasoningTokens,
-			Unclassified: breakdown.UnclassifiedTokens,
-		},
+		tokens:          Tokens(resolved.Detail.TokenBreakdown.Buckets()),
 	}
 }
 
