@@ -217,6 +217,10 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 	if !s.applyPprofConfigContext(ctx, cfg) {
 		return false
 	}
+	if !s.applyMetricsConfigContext(ctx, cfg) {
+		return false
+	}
+	s.applyUsageStoreConfig(cfg)
 	s.applyDiscoveryConfigContext(ctx, cfg)
 	if s.kvStoreManaged.Load() {
 		s.applyKVStoreConfig(cfg)
