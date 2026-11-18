@@ -25,8 +25,8 @@ func TestParseHeaderSignalsClaude(t *testing.T) {
 				"Anthropic-Ratelimit-Unified-Representative-Claim": "five_hour",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.58, ResetAt: unixUTC(reset5h), Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
-				{ID: SevenDay, Remaining: 0.1, ResetAt: unixUTC(reset7d), Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.58, ResetAt: unixUTC(reset5h), Length: 5 * time.Hour, ObservedAt: testObservedAt},
+				{ID: SevenDay, Remaining: 0.1, ResetAt: unixUTC(reset7d), Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -36,7 +36,7 @@ func TestParseHeaderSignalsClaude(t *testing.T) {
 				"anthropic-ratelimit-unified-5h-reset":       "1792015200",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 1, ResetAt: unixUTC(reset5h), Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 1, ResetAt: unixUTC(reset5h), Length: 5 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -56,7 +56,7 @@ func TestParseHeaderSignalsClaude(t *testing.T) {
 				"Anthropic-Ratelimit-Unified-7d-Reset":       "soon",
 			},
 			want: []Window{
-				{ID: SevenDay, Remaining: 0, Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: SevenDay, Remaining: 0, Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -93,8 +93,8 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"X-Codex-Primary-Over-Secondary-Limit-Percent": "0",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.75, ResetAt: unixUTC(resetPrimary), Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
-				{ID: Weekly, Remaining: 0.4, ResetAt: testObservedAt.Add(time.Hour), Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.75, ResetAt: unixUTC(resetPrimary), Length: 5 * time.Hour, ObservedAt: testObservedAt},
+				{ID: Weekly, Remaining: 0.4, ResetAt: testObservedAt.Add(time.Hour), Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -106,7 +106,7 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"X-Codex-Primary-Reset-After-Seconds": "60",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.9, ResetAt: unixUTC(resetPrimary), Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.9, ResetAt: unixUTC(resetPrimary), Length: 5 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -119,8 +119,8 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"X-Codex-Secondary-Reset-At":       "1792368000",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.95, Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
-				{ID: Monthly, Remaining: 0.7, ResetAt: unixUTC(resetSecondary), Length: 30 * 24 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.95, Length: 5 * time.Hour, ObservedAt: testObservedAt},
+				{ID: Monthly, Remaining: 0.7, ResetAt: unixUTC(resetSecondary), Length: 30 * 24 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -132,8 +132,8 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"X-Codex-Secondary-Window-Minutes": "300",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.8, Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
-				{ID: Weekly, Remaining: 0.3, Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.8, Length: 5 * time.Hour, ObservedAt: testObservedAt},
+				{ID: Weekly, Remaining: 0.3, Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -143,8 +143,8 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"x-codex-secondary-used-percent": "100",
 			},
 			want: []Window{
-				{ID: FiveHour, Remaining: 0.6, Length: 5 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
-				{ID: Weekly, Remaining: 0, Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: FiveHour, Remaining: 0.6, Length: 5 * time.Hour, ObservedAt: testObservedAt},
+				{ID: Weekly, Remaining: 0, Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{
@@ -160,7 +160,7 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 				"X-Codex-Code-Review-Primary-Window-Minutes":    "300",
 			},
 			want: []Window{
-				{ID: Weekly, Remaining: 0.875, Length: 168 * time.Hour, ObservedAt: testObservedAt, Source: SourceHeaders},
+				{ID: Weekly, Remaining: 0.875, Length: 168 * time.Hour, ObservedAt: testObservedAt},
 			},
 		},
 		{

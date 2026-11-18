@@ -61,7 +61,7 @@ func pickCodexWindows(primary, secondary *codexRawWindow) (short, long *codexRaw
 // codexWindows classifies primary and secondary and builds the windows. When
 // limitReached is set, a window without a used percentage but with a known
 // reset counts as fully used.
-func codexWindows(primary, secondary *codexRawWindow, limitReached bool, observedAt time.Time, source Source) []Window {
+func codexWindows(primary, secondary *codexRawWindow, limitReached bool, observedAt time.Time) []Window {
 	short, long := pickCodexWindows(primary, secondary)
 	var out []Window
 	add := func(w *codexRawWindow, id WindowID, defaultLength time.Duration) {
@@ -79,7 +79,7 @@ func codexWindows(primary, secondary *codexRawWindow, limitReached bool, observe
 		if length <= 0 {
 			length = defaultLength
 		}
-		out = append(out, newWindow(id, used, w.resetAt, length, observedAt, source))
+		out = append(out, newWindow(id, used, w.resetAt, length, observedAt))
 	}
 	add(short, FiveHour, fiveHourLength)
 	if long != nil {
@@ -98,7 +98,7 @@ func parseCodexHeaders(signals map[string]string, observedAt time.Time) []Window
 	return codexWindows(
 		codexHeaderWindow(signals, "x-codex-primary-", observedAt),
 		codexHeaderWindow(signals, "x-codex-secondary-", observedAt),
-		false, observedAt, SourceHeaders,
+		false, observedAt,
 	)
 }
 
@@ -141,7 +141,7 @@ func ParseCodexUsage(body []byte, observedAt time.Time) ([]Window, error) {
 	return codexWindows(
 		codexUsageWindow(field(rateLimit, "primary_window", "primaryWindow"), observedAt),
 		codexUsageWindow(field(rateLimit, "secondary_window", "secondaryWindow"), observedAt),
-		limitReached, observedAt, SourceProbe,
+		limitReached, observedAt,
 	), nil
 }
 

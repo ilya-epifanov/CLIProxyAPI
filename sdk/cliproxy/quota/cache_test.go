@@ -11,9 +11,9 @@ func TestCacheLookupMerge(t *testing.T) {
 	t0 := testObservedAt
 	reset := t0.Add(3 * time.Hour)
 	probeWindows := []Window{
-		{ID: FiveHour, Remaining: 0.2, ResetAt: reset, Length: 5 * time.Hour, ObservedAt: t0, Source: SourceProbe},
-		{ID: SevenDay, Remaining: 0.6, ResetAt: reset, Length: 168 * time.Hour, ObservedAt: t0, Source: SourceProbe},
-		{ID: SevenDayFable, Remaining: 0.3, ResetAt: reset, Length: 168 * time.Hour, ObservedAt: t0, Source: SourceProbe},
+		{ID: FiveHour, Remaining: 0.2, ResetAt: reset, Length: 5 * time.Hour, ObservedAt: t0},
+		{ID: SevenDay, Remaining: 0.6, ResetAt: reset, Length: 168 * time.Hour, ObservedAt: t0},
+		{ID: SevenDayFable, Remaining: 0.3, ResetAt: reset, Length: 168 * time.Hour, ObservedAt: t0},
 	}
 	signals := map[string]string{
 		"Anthropic-Ratelimit-Unified-5h-Utilization":    "0.5",
@@ -23,12 +23,11 @@ func TestCacheLookupMerge(t *testing.T) {
 	tests := []struct {
 		name       string
 		signalsAt  time.Time
-		wantSource Source
-		wantRemain float64
+		wantRemain float64 // probe 0.2, headers 0.5
 	}{
-		{"probe newer wins", t0.Add(-time.Second), SourceProbe, 0.2},
-		{"headers newer win", t0.Add(time.Second), SourceHeaders, 0.5},
-		{"tie goes to probe", t0, SourceProbe, 0.2},
+		{"probe newer wins", t0.Add(-time.Second), 0.2},
+		{"headers newer win", t0.Add(time.Second), 0.5},
+		{"tie goes to probe", t0, 0.2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,16 +38,16 @@ func TestCacheLookupMerge(t *testing.T) {
 				t.Fatalf("Lookup ok = false")
 			}
 			w, _ := snap.Window(FiveHour)
-			if w.Source != tt.wantSource || w.Remaining != tt.wantRemain {
-				t.Fatalf("five-hour = %+v, want source %s remaining %v", w, tt.wantSource, tt.wantRemain)
+			if w.Remaining != tt.wantRemain {
+				t.Fatalf("five-hour = %+v, want remaining %v", w, tt.wantRemain)
 			}
 			// Fable comes from the probe only, whatever the header timestamps.
 			fable, ok := snap.Window(SevenDayFable)
-			if !ok || fable.Source != SourceProbe || fable.Remaining != 0.3 {
+			if !ok || fable.Remaining != 0.3 || !fable.ObservedAt.Equal(t0) {
 				t.Fatalf("fable = %+v, %v", fable, ok)
 			}
-			if seven, _ := snap.Window(SevenDay); seven.Source != SourceProbe {
-				t.Fatalf("seven-day source = %s, want probe", seven.Source)
+			if seven, _ := snap.Window(SevenDay); seven.Remaining != 0.6 {
+				t.Fatalf("seven-day = %+v, want the probe's", seven)
 			}
 		})
 	}
@@ -69,7 +68,7 @@ func TestCacheLookupHeadersOnlyAndEmpty(t *testing.T) {
 	if !ok {
 		t.Fatalf("headers-only lookup: ok = false")
 	}
-	if w, found := snap.First(Weekly, FiveHour); !found || w.ID != FiveHour || w.Source != SourceHeaders {
+	if w, found := snap.First(Weekly, FiveHour); !found || w.ID != FiveHour || w.Remaining != 0.7 {
 		t.Fatalf("headers-only window = %+v, %v", w, found)
 	}
 }
@@ -77,7 +76,7 @@ func TestCacheLookupHeadersOnlyAndEmpty(t *testing.T) {
 func TestCachePutProbeForget(t *testing.T) {
 	c := NewCache()
 	now := testObservedAt
-	windows := []Window{{ID: FiveHour, Remaining: 0.5, Length: 5 * time.Hour, ObservedAt: now, Source: SourceProbe}}
+	windows := []Window{{ID: FiveHour, Remaining: 0.5, Length: 5 * time.Hour, ObservedAt: now}}
 	c.PutProbe("acc-1", windows)
 	windows[0].Remaining = 0 // the cache keeps its own copy
 
@@ -86,7 +85,7 @@ func TestCachePutProbeForget(t *testing.T) {
 		t.Fatalf("after PutProbe: %+v, %v", w, ok)
 	}
 
-	c.PutProbe("acc-1", []Window{{ID: Weekly, Remaining: 0.7, Length: 168 * time.Hour, ObservedAt: now, Source: SourceProbe}})
+	c.PutProbe("acc-1", []Window{{ID: Weekly, Remaining: 0.7, Length: 168 * time.Hour, ObservedAt: now}})
 	snap, _ = c.Lookup("acc-1", "codex", nil, time.Time{})
 	if _, found := snap.Window(FiveHour); found {
 		t.Fatalf("PutProbe did not replace the previous windows")
@@ -128,7 +127,7 @@ func TestCacheConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				c.PutProbe(authID, []Window{{ID: Weekly, Remaining: float64(j) / 200, Length: 168 * time.Hour, ObservedAt: now, Source: SourceProbe}})
+				c.PutProbe(authID, []Window{{ID: Weekly, Remaining: float64(j) / 200, Length: 168 * time.Hour, ObservedAt: now}})
 				if j%50 == 0 {
 					c.Forget(authID)
 				}

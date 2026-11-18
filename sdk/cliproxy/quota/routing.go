@@ -37,3 +37,36 @@ func RoutingWindowsFor(provider, model string) (RoutingWindows, bool) {
 func IsFableModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "claude-fable")
 }
+
+// AccountWindows are the routing windows observed for one account.
+type AccountWindows struct {
+	Short    Window
+	HasShort bool
+	// Long holds the first observed window of each long slot, in slot order.
+	Long []Window
+	// Complete is false when a long slot has no observation.
+	Complete bool
+}
+
+// All returns the short window, when observed, followed by the long ones.
+func (w AccountWindows) All() []Window {
+	if !w.HasShort {
+		return w.Long
+	}
+	return append([]Window{w.Short}, w.Long...)
+}
+
+// Observed picks r's windows out of s. A missing short window leaves the account
+// uncapped by it; a missing long window leaves the account's quota unknown
+// (Complete false).
+func (r RoutingWindows) Observed(s Snapshot) AccountWindows {
+	out := AccountWindows{Long: make([]Window, 0, len(r.Long))}
+	out.Short, out.HasShort = s.Window(r.Short)
+	for _, slot := range r.Long {
+		if w, found := s.First(slot...); found {
+			out.Long = append(out.Long, w)
+		}
+	}
+	out.Complete = len(out.Long) == len(r.Long)
+	return out
+}

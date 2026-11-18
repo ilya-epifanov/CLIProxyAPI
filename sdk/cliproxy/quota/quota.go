@@ -7,10 +7,7 @@
 // sdk/cliproxy/auth imports it.
 package quota
 
-import (
-	"sort"
-	"time"
-)
+import "time"
 
 // WindowID names one quota window of a provider.
 type WindowID string
@@ -23,14 +20,6 @@ const (
 	Monthly       WindowID = "monthly"         // Codex monthly second window (team plans)
 )
 
-// Source tells where a window was observed.
-type Source string
-
-const (
-	SourceProbe   Source = "probe"
-	SourceHeaders Source = "headers"
-)
-
 // Window is one observed quota window.
 type Window struct {
 	ID         WindowID
@@ -38,12 +27,20 @@ type Window struct {
 	ResetAt    time.Time     // zero: no reset pending (window not started, or reset time not reported)
 	Length     time.Duration // window length; > 0
 	ObservedAt time.Time
-	Source     Source
 }
 
 // Snapshot is the merged set of windows of one account. Zero value is empty.
 type Snapshot struct {
 	windows map[WindowID]Window
+}
+
+// NewSnapshot holds windows; of two with the same ID, the later one is kept.
+func NewSnapshot(windows []Window) Snapshot {
+	out := Snapshot{windows: make(map[WindowID]Window, len(windows))}
+	for _, w := range windows {
+		out.windows[w.ID] = w
+	}
+	return out
 }
 
 // Window returns the window with the given ID.
@@ -62,30 +59,14 @@ func (s Snapshot) First(ids ...WindowID) (Window, bool) {
 	return Window{}, false
 }
 
-// Windows returns all windows sorted by ID.
-func (s Snapshot) Windows() []Window {
-	out := make([]Window, 0, len(s.windows))
-	for _, w := range s.windows {
-		out = append(out, w)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
-// Empty reports whether the snapshot holds no window.
-func (s Snapshot) Empty() bool {
-	return len(s.windows) == 0
-}
-
 // newWindow builds a window from a used percentage (0..100).
-func newWindow(id WindowID, usedPercent float64, resetAt time.Time, length time.Duration, observedAt time.Time, source Source) Window {
+func newWindow(id WindowID, usedPercent float64, resetAt time.Time, length time.Duration, observedAt time.Time) Window {
 	return Window{
 		ID:         id,
 		Remaining:  clampFraction(1 - usedPercent/100),
 		ResetAt:    resetAt,
 		Length:     length,
 		ObservedAt: observedAt,
-		Source:     source,
 	}
 }
 
