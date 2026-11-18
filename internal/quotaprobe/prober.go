@@ -186,9 +186,9 @@ func (p *Prober) Refresh(ctx context.Context, authIndex string) (Entry, error) {
 	}
 
 	p.mu.Lock()
-	if entry := p.entries[authIndex]; entry != nil && p.now().Sub(entry.AttemptedAt) < p.minInterval {
+	if p.attemptedWithinLocked(authIndex, p.minInterval, p.now()) {
 		defer p.mu.Unlock()
-		return *entry, nil
+		return *p.entries[authIndex], nil
 	}
 	done, inflight := p.inflight[authIndex]
 	if !inflight {
@@ -256,25 +256,44 @@ drain:
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, auth := range auths {
-		if auth == nil || auth.Disabled || !ids[auth.ID] {
+		if auth == nil || !ids[auth.ID] {
 			continue
 		}
-		if _, ok := planFor(auth); !ok {
-			continue
-		}
-		authIndex := strings.TrimSpace(auth.EnsureIndex())
-		if authIndex == "" {
-			continue
-		}
-		if _, queued := p.inflight[authIndex]; queued {
-			continue
-		}
-		if entry := p.entries[authIndex]; entry != nil && now.Sub(entry.AttemptedAt) < p.minInterval {
+		authIndex, probed := probedIndex(auth)
+		if !probed || !p.dueLocked(authIndex, p.minInterval, now) {
 			continue
 		}
 		p.queue = append([]string{authIndex}, p.queue...)
 		p.inflight[authIndex] = make(chan struct{})
 	}
+}
+
+// probedIndex returns the auth_index of auth when it is an enabled account of a
+// probed provider.
+func probedIndex(auth *coreauth.Auth) (string, bool) {
+	if auth == nil || auth.Disabled {
+		return "", false
+	}
+	authIndex := strings.TrimSpace(auth.EnsureIndex())
+	if authIndex == "" {
+		return "", false
+	}
+	_, ok := planFor(auth)
+	return authIndex, ok
+}
+
+// attemptedWithinLocked reports whether the account was probed less than interval
+// before now. The caller holds mu.
+func (p *Prober) attemptedWithinLocked(authIndex string, interval time.Duration, now time.Time) bool {
+	entry := p.entries[authIndex]
+	return entry != nil && now.Sub(entry.AttemptedAt) < interval
+}
+
+// dueLocked reports whether the account may be queued: it is not queued or running,
+// and was not probed within interval. The caller holds mu.
+func (p *Prober) dueLocked(authIndex string, interval time.Duration, now time.Time) bool {
+	_, queued := p.inflight[authIndex]
+	return !queued && !p.attemptedWithinLocked(authIndex, interval, now)
 }
 
 func (p *Prober) signal() {
@@ -293,21 +312,12 @@ func (p *Prober) enqueueDue() {
 	defer p.mu.Unlock()
 	present := map[string]bool{}
 	for _, auth := range auths {
-		if auth == nil || auth.Disabled {
-			continue
-		}
-		authIndex := strings.TrimSpace(auth.EnsureIndex())
-		if authIndex == "" {
-			continue
-		}
-		if _, ok := planFor(auth); !ok {
+		authIndex, probed := probedIndex(auth)
+		if !probed {
 			continue
 		}
 		present[authIndex] = true
-		if _, queued := p.inflight[authIndex]; queued {
-			continue
-		}
-		if entry := p.entries[authIndex]; entry != nil && now.Sub(entry.AttemptedAt) < p.refreshInterval {
+		if !p.dueLocked(authIndex, p.refreshInterval, now) {
 			continue
 		}
 		p.queue = append(p.queue, authIndex)

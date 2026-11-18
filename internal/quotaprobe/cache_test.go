@@ -25,7 +25,7 @@ func TestProbeStoresParsedWindowsByAuthID(t *testing.T) {
 	if !ok {
 		t.Fatal("probe did not reach the cache")
 	}
-	if w, found := snapshot.Window(quota.SevenDay); !found || w.Remaining != 0.6 || w.Source != quota.SourceProbe {
+	if w, found := snapshot.Window(quota.SevenDay); !found || w.Remaining != 0.6 {
 		t.Fatalf("seven-day = %+v, %v", w, found)
 	}
 

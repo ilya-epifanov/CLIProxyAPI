@@ -26,7 +26,7 @@ func assertWindows(t *testing.T, got, want []Window) {
 	for i := range want {
 		g, w := got[i], want[i]
 		if g.ID != w.ID || math.Abs(g.Remaining-w.Remaining) > 1e-9 || !g.ResetAt.Equal(w.ResetAt) ||
-			g.Length != w.Length || !g.ObservedAt.Equal(w.ObservedAt) || g.Source != w.Source {
+			g.Length != w.Length || !g.ObservedAt.Equal(w.ObservedAt) {
 			t.Errorf("window %d:\n got  %+v\n want %+v", i, g, w)
 		}
 	}
@@ -34,9 +34,6 @@ func assertWindows(t *testing.T, got, want []Window) {
 
 func TestSnapshotAccessors(t *testing.T) {
 	var empty Snapshot
-	if !empty.Empty() || len(empty.Windows()) != 0 {
-		t.Fatalf("zero Snapshot is not empty")
-	}
 	if _, ok := empty.First(FiveHour); ok {
 		t.Fatalf("First on empty snapshot found a window")
 	}
@@ -46,9 +43,6 @@ func TestSnapshotAccessors(t *testing.T) {
 		FiveHour: {ID: FiveHour, Remaining: 0.9},
 		Monthly:  {ID: Monthly, Remaining: 0.1},
 	}}
-	if s.Empty() {
-		t.Fatalf("snapshot reported empty")
-	}
 	if w, ok := s.Window(Weekly); !ok || w.Remaining != 0.5 {
 		t.Fatalf("Window(Weekly) = %+v, %v", w, ok)
 	}
@@ -57,13 +51,6 @@ func TestSnapshotAccessors(t *testing.T) {
 	}
 	if w, ok := s.First(SevenDay, Monthly, Weekly); !ok || w.ID != Monthly {
 		t.Fatalf("First = %+v, %v; want monthly", w, ok)
-	}
-	var ids []WindowID
-	for _, w := range s.Windows() {
-		ids = append(ids, w.ID)
-	}
-	if want := []WindowID{FiveHour, Monthly, Weekly}; len(ids) != 3 || ids[0] != want[0] || ids[1] != want[1] || ids[2] != want[2] {
-		t.Fatalf("Windows order = %v, want %v", ids, want)
 	}
 }
 

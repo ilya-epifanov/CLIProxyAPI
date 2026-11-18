@@ -8,7 +8,7 @@ import (
 func TestParseCodexUsage(t *testing.T) {
 	const resetPrimary, resetSecondary = 1792015200, 1792368000
 	probe := func(id WindowID, remaining float64, resetAt time.Time, length time.Duration) Window {
-		return Window{ID: id, Remaining: remaining, ResetAt: resetAt, Length: length, ObservedAt: testObservedAt, Source: SourceProbe}
+		return Window{ID: id, Remaining: remaining, ResetAt: resetAt, Length: length, ObservedAt: testObservedAt}
 	}
 
 	tests := []struct {

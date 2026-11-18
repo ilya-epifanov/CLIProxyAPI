@@ -45,21 +45,18 @@ func quotaCooldownsRecovered(auth *Auth, windows []quota.Window, sentAt, now tim
 	if auth == nil || auth.Disabled || auth.Status == StatusDisabled || hasUnauthorizedAuthFailure(auth) {
 		return false
 	}
-	read := make(map[quota.WindowID]quota.Window, len(windows))
-	for _, w := range windows {
-		read[w.ID] = w
-	}
+	read := quota.NewSnapshot(windows)
 	open := func(model string) bool {
 		routing, tracked := quota.RoutingWindowsFor(auth.Provider, model)
 		if !tracked {
 			return false
 		}
-		if w, ok := read[routing.Short]; ok && exhausted(w, now) {
+		observed := routing.Observed(read)
+		if !observed.Complete {
 			return false
 		}
-		for _, slot := range routing.Long {
-			w, ok := firstWindow(read, slot)
-			if !ok || exhausted(w, now) {
+		for _, w := range observed.All() {
+			if exhausted(w, now) {
 				return false
 			}
 		}
@@ -98,15 +95,6 @@ func quotaCooldownsRecovered(auth *Auth, windows []quota.Window, sentAt, now tim
 func isQuotaCooldown(q QuotaState) bool {
 	reason := strings.TrimSpace(q.Reason)
 	return q.Exceeded && (reason == "quota" || reason == "credential_quota")
-}
-
-func firstWindow(read map[quota.WindowID]quota.Window, slot quota.Slot) (quota.Window, bool) {
-	for _, id := range slot {
-		if w, ok := read[id]; ok {
-			return w, true
-		}
-	}
-	return quota.Window{}, false
 }
 
 // exhausted reports a window at 0 % whose reset is pending or unknown.

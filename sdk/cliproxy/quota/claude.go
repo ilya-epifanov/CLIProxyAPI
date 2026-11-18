@@ -28,7 +28,7 @@ func parseClaudeHeaders(signals map[string]string, observedAt time.Time) []Windo
 			continue
 		}
 		resetAt := headerResetAt(signals[spec.prefix+"reset"])
-		out = append(out, newWindow(spec.id, utilization*100, resetAt, spec.length, observedAt, SourceHeaders))
+		out = append(out, newWindow(spec.id, utilization*100, resetAt, spec.length, observedAt))
 	}
 	return out
 }
@@ -50,7 +50,7 @@ func ParseClaudeUsage(body []byte, observedAt time.Time) ([]Window, error) {
 	if limit, ok := findFableUsageLimit(root.Get("limits")); ok {
 		used, _ := jsonNumber(limit.Get("percent"))
 		resetAt := jsonResetAt(limit.Get("resets_at"))
-		out = append(out, newWindow(SevenDayFable, used, resetAt, weekLength, observedAt, SourceProbe))
+		out = append(out, newWindow(SevenDayFable, used, resetAt, weekLength, observedAt))
 	} else if legacy := root.Get("iguana_necktie"); !isDollarDenominated(legacy) {
 		// A dollar-denominated iguana_necktie is a credit pool, not the Fable window.
 		if w, ok := claudeUsageWindow(legacy, SevenDayFable, weekLength, observedAt); ok {
@@ -69,7 +69,7 @@ func claudeUsageWindow(obj ojson.Result, id WindowID, length time.Duration, obse
 	if !ok {
 		return Window{}, false
 	}
-	return newWindow(id, used, jsonResetAt(obj.Get("resets_at")), length, observedAt, SourceProbe), true
+	return newWindow(id, used, jsonResetAt(obj.Get("resets_at")), length, observedAt), true
 }
 
 // findFableUsageLimit picks the weekly_scoped Fable entry of limits[] with a

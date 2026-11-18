@@ -10,7 +10,7 @@ func TestParseClaudeUsage(t *testing.T) {
 	sevenDayReset := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
 	fableReset := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
 	probe := func(id WindowID, remaining float64, resetAt time.Time, length time.Duration) Window {
-		return Window{ID: id, Remaining: remaining, ResetAt: resetAt, Length: length, ObservedAt: testObservedAt, Source: SourceProbe}
+		return Window{ID: id, Remaining: remaining, ResetAt: resetAt, Length: length, ObservedAt: testObservedAt}
 	}
 
 	tests := []struct {
