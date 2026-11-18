@@ -50,14 +50,14 @@ func NewAggregator() *Aggregator {
 // HandleUsage implements usage.Plugin.
 func (a *Aggregator) HandleUsage(ctx context.Context, record coreusage.Record) {
 	resolved := coreusage.Resolve(ctx, record)
-	breakdown := resolved.Detail.TokenBreakdown
+	buckets := resolved.Detail.TokenBreakdown.Buckets()
 	tokens := [tokenTypeCount]int64{
-		tokenInput:        breakdown.Input.UncachedTokens,
-		tokenCacheRead:    breakdown.Input.CacheReadTokens,
-		tokenCacheWrite:   breakdown.Input.CacheWriteTokens,
-		tokenOutput:       breakdown.Output.NonReasoningTokens,
-		tokenReasoning:    breakdown.Output.ReasoningTokens,
-		tokenUnclassified: breakdown.UnclassifiedTokens,
+		tokenInput:        buckets.Input,
+		tokenCacheRead:    buckets.CacheRead,
+		tokenCacheWrite:   buckets.CacheWrite,
+		tokenOutput:       buckets.Output,
+		tokenReasoning:    buckets.Reasoning,
+		tokenUnclassified: buckets.Unclassified,
 	}
 	key := seriesKey{
 		provider:  resolved.Provider,
