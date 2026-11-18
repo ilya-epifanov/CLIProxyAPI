@@ -9,6 +9,7 @@ import (
 	"time"
 
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -19,6 +20,8 @@ const (
 	// account never bursts at the providers.
 	DefaultSpacing  = 2 * time.Second
 	maxErrorMessage = 300
+	// refreshRequests bounds pending RequestRefresh calls; more are dropped.
+	refreshRequests = 64
 )
 
 var (
@@ -73,6 +76,8 @@ type Options struct {
 	// Spacing separates consecutive probes of different accounts.
 	Spacing time.Duration
 	Now     func() time.Time
+	// Cache receives the windows parsed from each successful probe; optional.
+	Cache *quota.Cache
 }
 
 // Prober probes accounts one at a time from a single queue.
@@ -84,9 +89,14 @@ type Prober struct {
 	spacing         time.Duration
 	now             func() time.Time
 	wake            chan struct{}
+	cache           *quota.Cache
+	// requests carries auth IDs from RequestRefresh to Run.
+	requests chan string
 
 	mu      sync.Mutex
 	entries map[string]*Entry
+	// authIDs maps auth_index to auth ID for the cache, which is keyed by ID.
+	authIDs map[string]string
 	queue   []string
 	// inflight holds every queued or running probe; the probe closes its
 	// channel when it is recorded.
@@ -107,7 +117,10 @@ func New(opts Options) *Prober {
 		spacing:         opts.Spacing,
 		now:             now,
 		wake:            make(chan struct{}, 1),
+		cache:           opts.Cache,
+		requests:        make(chan string, refreshRequests),
 		entries:         map[string]*Entry{},
+		authIDs:         map[string]string{},
 		inflight:        map[string]chan struct{}{},
 	}
 }
@@ -118,6 +131,7 @@ func (p *Prober) Run(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		p.enqueueDue()
+		p.enqueueRequested()
 		if authIndex, ok := p.next(); ok {
 			p.probe(ctx, authIndex)
 			if !sleep(ctx, p.spacing) {
@@ -200,6 +214,58 @@ func (p *Prober) Entries() []Entry {
 	return out
 }
 
+// RequestRefresh asks for a probe of the account with auth ID authID soon, unless it
+// was probed within MinInterval or is already queued. It never blocks: a request that
+// does not fit the buffer is dropped, and the schedule still probes the account later.
+func (p *Prober) RequestRefresh(authID string) {
+	select {
+	case p.requests <- authID:
+		p.signal()
+	default:
+	}
+}
+
+// enqueueRequested queues the accounts asked for by RequestRefresh.
+func (p *Prober) enqueueRequested() {
+	ids := map[string]bool{}
+drain:
+	for {
+		select {
+		case authID := <-p.requests:
+			ids[authID] = true
+		default:
+			break drain
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	auths := p.auths()
+	now := p.now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, auth := range auths {
+		if auth == nil || auth.Disabled || !ids[auth.ID] {
+			continue
+		}
+		if _, ok := planFor(auth); !ok {
+			continue
+		}
+		authIndex := strings.TrimSpace(auth.EnsureIndex())
+		if authIndex == "" {
+			continue
+		}
+		if _, queued := p.inflight[authIndex]; queued {
+			continue
+		}
+		if entry := p.entries[authIndex]; entry != nil && now.Sub(entry.AttemptedAt) < p.minInterval {
+			continue
+		}
+		p.queue = append([]string{authIndex}, p.queue...)
+		p.inflight[authIndex] = make(chan struct{})
+	}
+}
+
 func (p *Prober) signal() {
 	select {
 	case p.wake <- struct{}{}:
@@ -240,6 +306,10 @@ func (p *Prober) enqueueDue() {
 		if !present[authIndex] {
 			if _, queued := p.inflight[authIndex]; !queued {
 				delete(p.entries, authIndex)
+				if p.cache != nil {
+					p.cache.Forget(p.authIDs[authIndex])
+				}
+				delete(p.authIDs, authIndex)
 			}
 		}
 	}
@@ -313,7 +383,13 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 	}
 
 	now := p.now()
+	if failure == nil && p.cache != nil {
+		p.storeWindows(auth, responses[plan[0].Name], now)
+	}
 	p.mu.Lock()
+	if auth != nil {
+		p.authIDs[authIndex] = auth.ID
+	}
 	entry := p.entries[authIndex]
 	if entry == nil {
 		entry = &Entry{AuthIndex: authIndex, Responses: map[string]Response{}}
@@ -335,6 +411,17 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 	if failure != nil {
 		log.WithFields(log.Fields{"auth_index": authIndex, "status": failure.Status}).Warnf("quota probe failed: %s", failure.Message)
 	}
+}
+
+// storeWindows parses the primary response into the cache. A body the parser rejects
+// keeps the previous windows, which then age into stale.
+func (p *Prober) storeWindows(auth *coreauth.Auth, response Response, observedAt time.Time) {
+	windows, err := quota.ParseProbe(auth.Provider, []byte(response.Body), observedAt)
+	if err != nil {
+		log.WithError(err).WithField("auth_id", auth.ID).Warn("quota probe: cannot parse usage response")
+		return
+	}
+	p.cache.PutProbe(auth.ID, windows)
 }
 
 func truncate(s string, n int) string {

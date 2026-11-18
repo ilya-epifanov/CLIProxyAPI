@@ -21,6 +21,7 @@ import (
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginstore"
 )
@@ -88,6 +89,10 @@ type Service struct {
 
 	// quotaProbeConfig is the quota probe setting the service started with.
 	quotaProbeConfig internalconfig.QuotaProbeConfig
+
+	// quotaCache holds the quota windows parsed from quota reads; never nil for a
+	// service built by Builder.
+	quotaCache *quota.Cache
 
 	// discoveryManager manages local network mDNS / DNS-SD service advertising.
 	discoveryManager *discoveryAdvertiserManager
