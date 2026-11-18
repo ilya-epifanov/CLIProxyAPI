@@ -12,15 +12,9 @@ import (
 // CostUnits weights a request's tokens by API price ratios, so quota spent on cache reads
 // and on output compares: 1 unit is 1M uncached input tokens, a cache read 0.1, a cache
 // write 1.25, output and reasoning 5. Unclassified tokens count as input.
-func CostUnits(b coreusage.TokenBreakdown) float64 {
-	return CostUnitsOf(b.Input.UncachedTokens, b.Input.CacheReadTokens, b.Input.CacheWriteTokens,
-		b.Output.NonReasoningTokens, b.Output.ReasoningTokens, b.UnclassifiedTokens)
-}
-
-// CostUnitsOf is CostUnits over the disjoint token buckets.
-func CostUnitsOf(input, cacheRead, cacheWrite, output, reasoning, unclassified int64) float64 {
-	tokens := float64(input) + 0.1*float64(cacheRead) + 1.25*float64(cacheWrite) +
-		5*float64(output+reasoning) + float64(unclassified)
+func CostUnits(b coreusage.TokenBuckets) float64 {
+	tokens := float64(b.Input) + 0.1*float64(b.CacheRead) + 1.25*float64(b.CacheWrite) +
+		5*float64(b.Output+b.Reasoning) + float64(b.Unclassified)
 	return tokens / 1e6
 }
 

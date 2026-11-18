@@ -193,17 +193,17 @@ func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time
 	if !ok {
 		return r
 	}
-	short, hasShort, long := windows.short, windows.hasShort, windows.long
+	short, hasShort, long := windows.Short, windows.HasShort, windows.Long
 	for _, w := range long {
 		r.LongWindows = append(r.LongWindows, w.ID)
 	}
-	for _, w := range windows.all() {
+	for _, w := range windows.All() {
 		if exhausted(w, now) {
 			r.Class, r.ExhaustedWindow, r.BackAt = ClassExhausted, w.ID, w.ResetAt
 			return r
 		}
 	}
-	if !windows.complete {
+	if !windows.Complete {
 		return r
 	}
 	r.Pace = math.Inf(1)
@@ -229,45 +229,19 @@ func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time
 	return r
 }
 
-// accountWindows are the observed routing windows of one account's selection model.
-type accountWindows struct {
-	short    quota.Window
-	hasShort bool
-	// long holds the first observed window of each long slot, in slot order.
-	long []quota.Window
-	// complete is false when a long slot has no observation.
-	complete bool
-}
-
-// all returns the short window, when observed, followed by the long ones.
-func (w accountWindows) all() []quota.Window {
-	if !w.hasShort {
-		return w.long
-	}
-	return append([]quota.Window{w.short}, w.long...)
-}
-
 // windowsOf looks up auth's routing windows for its selection model. ok is false when the
 // provider has no quota windows or none was observed.
-func (s *PaceSelector) windowsOf(auth *Auth, selectionModel string) (accountWindows, bool) {
+func (s *PaceSelector) windowsOf(auth *Auth, selectionModel string) (quota.AccountWindows, bool) {
 	routing, tracked := quota.RoutingWindowsFor(auth.Provider, canonicalModelKey(selectionModel))
 	if !tracked {
-		return accountWindows{}, false
+		return quota.AccountWindows{}, false
 	}
 	// auth is a candidate clone, so reading its signals here is safe.
 	snapshot, ok := s.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
 	if !ok {
-		return accountWindows{}, false
+		return quota.AccountWindows{}, false
 	}
-	out := accountWindows{long: make([]quota.Window, 0, len(routing.Long))}
-	out.short, out.hasShort = snapshot.Window(routing.Short)
-	for _, slot := range routing.Long {
-		if w, found := snapshot.First(slot...); found {
-			out.long = append(out.long, w)
-		}
-	}
-	out.complete = len(out.long) == len(routing.Long)
-	return out, true
+	return routing.Observed(snapshot), true
 }
 
 // pace returns R/T for one window that is not exhausted.

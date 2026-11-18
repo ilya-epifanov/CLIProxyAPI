@@ -10,16 +10,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// throttleOverrideJSON is a pool's throttle override as the ranking reports it.
-type throttleOverrideJSON struct {
-	Speed float64   `json:"speed"`
-	SetAt time.Time `json:"set_at"`
-}
-
-func throttleOverrideFor(o coreauth.ThrottleOverride) *throttleOverrideJSON {
-	return &throttleOverrideJSON{Speed: o.Speed, SetAt: o.SetAt.UTC()}
-}
-
 // throttleOverridePool returns the provider pool named in the path, or writes 404.
 func (h *Handler) throttleOverridePool(c *gin.Context) (string, bool) {
 	if h.authManager == nil {
@@ -59,7 +49,7 @@ func (h *Handler) PutThrottleOverride(c *gin.Context) {
 		return
 	}
 	log.Infof("pace throttle: %s pool overridden to speed %.2f", provider, override.Speed)
-	c.JSON(http.StatusOK, gin.H{"provider": provider, "override": throttleOverrideFor(override)})
+	c.JSON(http.StatusOK, gin.H{"provider": provider, "override": override})
 }
 
 // DeleteThrottleOverride returns a pool to its computed throttle:

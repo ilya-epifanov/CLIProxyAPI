@@ -67,14 +67,13 @@ func (s *Service) startUsageObservability(ctx context.Context) error {
 func seedPaceLedger(ctx context.Context, store *usagestore.Store, ledger *coreauth.UsageLedger) {
 	var entries []coreauth.LedgerEntry
 	covered, err := store.RequestsSince(ctx, time.Now().Add(-paceLedgerSeedSpan), func(r usagestore.RequestUsage) {
-		t := r.Tokens
 		entries = append(entries, coreauth.LedgerEntry{
 			At:        r.At,
 			Provider:  r.Provider,
 			AuthIndex: r.AuthIndex,
 			Model:     r.Model,
 			SessionID: r.SessionID,
-			Units:     coreauth.CostUnitsOf(t.Input, t.CacheRead, t.CacheWrite, t.Output, t.Reasoning, t.Unclassified),
+			Units:     coreauth.CostUnits(usage.TokenBuckets(r.Tokens)),
 		})
 	})
 	if err != nil {

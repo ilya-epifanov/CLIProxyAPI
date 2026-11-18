@@ -997,20 +997,11 @@ func selectorContextForAvailableAuths(ctx context.Context, selector Selector, ro
 	return context.WithValue(ctx, prevalidatedAuthCandidatesKey{}, true)
 }
 
-// usesSelectionModels reports whether selector ranks candidates by the model each one
-// will serve (PaceSelector, also behind SessionAffinitySelector).
-func usesSelectionModels(selector Selector) bool {
-	if affinity, ok := selector.(*SessionAffinitySelector); ok && affinity != nil {
-		selector = affinity.fallback
-	}
-	_, ok := selector.(*PaceSelector)
-	return ok
-}
-
 // selectionModelsLocked maps each candidate's ID to its selection model for selectors
-// that need it, nil otherwise. The caller holds m.mu.
+// that rank candidates by the model each one will serve (PaceSelector, also behind
+// SessionAffinitySelector), nil otherwise. The caller holds m.mu.
 func (m *Manager) selectionModelsLocked(selector Selector, auths []*Auth, routeModel string) map[string]string {
-	if !usesSelectionModels(selector) || strings.TrimSpace(routeModel) == "" {
+	if _, pace := paceSelectorOf(selector); !pace || strings.TrimSpace(routeModel) == "" {
 		return nil
 	}
 	models := make(map[string]string, len(auths))
