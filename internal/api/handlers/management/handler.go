@@ -61,6 +61,8 @@ type Handler struct {
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
 	usageHistory            UsageHistory
+	quotaProbes             QuotaProbes
+	quotaProbeTransports    quotaProbeTransports
 	authCache               managementAuthCache
 	siwcOAuthFactory        func(*config.Config, string) siwcOAuthService
 	siwcCommitMu            sync.Mutex
