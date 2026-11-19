@@ -94,42 +94,35 @@ func (t PaceThrottleConfig) Warning() string {
 
 // MarginOrDefault returns Margin or its default.
 func (t PaceThrottleConfig) MarginOrDefault() float64 {
-	if t.Margin == nil {
-		return DefaultThrottleMargin
-	}
-	return *t.Margin
+	return valueOr(t.Margin, DefaultThrottleMargin)
 }
 
 // ReserveOrDefault returns Reserve or its default.
 func (t PaceThrottleConfig) ReserveOrDefault() float64 {
-	if t.Reserve == nil {
-		return DefaultThrottleReserve
-	}
-	return *t.Reserve
+	return valueOr(t.Reserve, DefaultThrottleReserve)
 }
 
 // GuardHorizonOrDefault returns GuardHorizon or its default.
 func (t PaceThrottleConfig) GuardHorizonOrDefault() time.Duration {
-	if t.GuardHorizon == nil {
-		return DefaultThrottleGuard
-	}
-	return *t.GuardHorizon
+	return valueOr(t.GuardHorizon, DefaultThrottleGuard)
 }
 
 // BurstReserveOrDefault returns BurstReserve or its default.
 func (p PaceRoutingConfig) BurstReserveOrDefault() float64 {
-	if p.BurstReserve == nil {
-		return DefaultPaceBurstReserve
-	}
-	return *p.BurstReserve
+	return valueOr(p.BurstReserve, DefaultPaceBurstReserve)
 }
 
 // PaceToleranceOrDefault returns PaceTolerance or its default.
 func (p PaceRoutingConfig) PaceToleranceOrDefault() float64 {
-	if p.PaceTolerance == nil {
-		return DefaultPaceTolerance
+	return valueOr(p.PaceTolerance, DefaultPaceTolerance)
+}
+
+// valueOr returns *p, or def when p is nil.
+func valueOr[T any](p *T, def T) T {
+	if p == nil {
+		return def
 	}
-	return *p.PaceTolerance
+	return *p
 }
 
 // StaleAfterOrDefault returns StaleAfter, or its default when zero.

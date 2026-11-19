@@ -232,7 +232,7 @@ func (l *UsageLedger) Observe(authIndex string, w quota.Window) {
 		return
 	}
 	log = append(log, shareObservation{at: w.ObservedAt, used: 1 - w.Remaining, resetAt: w.ResetAt})
-	l.observed[key] = pruneBefore(log, w.ObservedAt.Add(-burnSpan), func(o shareObservation) time.Time { return o.at })
+	l.observed[key] = pruneBefore(log, w.ObservedAt.Add(-burnSpan))
 }
 
 // Burn is the share of window id per hour the account with authIndex spent over the last
@@ -241,19 +241,11 @@ func (l *UsageLedger) Observe(authIndex string, w quota.Window) {
 func (l *UsageLedger) Burn(authIndex string, id quota.WindowID, now time.Time) (float64, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	var first, last *shareObservation
-	for i, o := range l.observed[ledgerKey{authIndex, id}] {
-		if o.at.Before(now.Add(-burnSpan)) {
-			continue
-		}
-		if first == nil {
-			first = &l.observed[ledgerKey{authIndex, id}][i]
-		}
-		last = &l.observed[ledgerKey{authIndex, id}][i]
-	}
-	if first == nil || last.at.Sub(first.at) < minBurnSpan {
+	log := pruneBefore(l.observed[ledgerKey{authIndex, id}], now.Add(-burnSpan))
+	if len(log) == 0 || log[len(log)-1].at.Sub(log[0].at) < minBurnSpan {
 		return 0, false
 	}
+	first, last := log[0], log[len(log)-1]
 	spent := last.used - first.used
 	if !sameWindow(last.resetAt, first.resetAt) {
 		// The window reset in between: what is used now was all spent since.
@@ -271,13 +263,13 @@ func sameWindow(a, b time.Time) bool {
 	return a.Sub(b).Abs() < time.Minute
 }
 
-// pruneBefore drops the leading items older than cut.
-func pruneBefore[T any](items []T, cut time.Time, at func(T) time.Time) []T {
+// pruneBefore drops the leading observations older than cut.
+func pruneBefore(log []shareObservation, cut time.Time) []shareObservation {
 	i := 0
-	for i < len(items) && at(items[i]).Before(cut) {
+	for i < len(log) && log[i].at.Before(cut) {
 		i++
 	}
-	return items[i:]
+	return log[i:]
 }
 
 // Forecast is provider's demand on window: the last hour for the next hour, the last

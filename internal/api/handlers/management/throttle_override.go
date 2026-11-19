@@ -2,11 +2,12 @@ package management
 
 import (
 	"net/http"
-	"slices"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -17,7 +18,8 @@ func (h *Handler) throttleOverridePool(c *gin.Context) (string, bool) {
 		return "", false
 	}
 	provider := c.Param("provider")
-	if !slices.Contains(rankedProviders, provider) {
+	// A pool is one the throttle plans; the name must be given in its canonical form.
+	if _, tracked := quota.RoutingWindowsFor(provider, ""); !tracked || provider != strings.ToLower(strings.TrimSpace(provider)) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "unknown_pool"})
 		return "", false
 	}

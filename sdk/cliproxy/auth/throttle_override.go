@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -87,7 +88,7 @@ func (o *ThrottleOverrides) Get(provider string) (ThrottleOverride, bool) {
 func (o *ThrottleOverrides) Set(provider string, speed float64, now time.Time) (ThrottleOverride, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	next := cloneOverrides(o.overrides)
+	next := maps.Clone(o.overrides)
 	next[provider] = ThrottleOverride{Speed: speed, SetAt: now.UTC()}
 	if err := o.storeLocked(next); err != nil {
 		return ThrottleOverride{}, err
@@ -103,21 +104,13 @@ func (o *ThrottleOverrides) Clear(provider string) error {
 	if _, ok := o.overrides[provider]; !ok {
 		return nil
 	}
-	next := cloneOverrides(o.overrides)
+	next := maps.Clone(o.overrides)
 	delete(next, provider)
 	if err := o.storeLocked(next); err != nil {
 		return err
 	}
 	o.overrides = next
 	return nil
-}
-
-func cloneOverrides(in map[string]ThrottleOverride) map[string]ThrottleOverride {
-	out := make(map[string]ThrottleOverride, len(in)+1)
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
 
 // storeLocked replaces the file with overrides, so a crash leaves the old or the new one.

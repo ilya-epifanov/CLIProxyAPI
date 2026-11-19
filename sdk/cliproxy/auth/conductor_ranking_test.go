@@ -18,20 +18,27 @@ func newPaceManager(t *testing.T, selector func(*quota.Cache) Selector, models [
 	cache := quota.NewCache()
 	manager := NewManager(nil, selector(cache), nil)
 	manager.executors["claude"] = schedulerTestExecutor{provider: "claude"}
-	reg := registry.GetGlobalRegistry()
 	for _, auth := range auths {
-		infos := make([]*registry.ModelInfo, 0, len(models))
-		for _, model := range models {
-			infos = append(infos, &registry.ModelInfo{ID: model})
-		}
-		reg.RegisterClient(auth.ID, "claude", infos)
-		authID := auth.ID
-		t.Cleanup(func() { reg.UnregisterClient(authID) })
-		if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
-			t.Fatalf("Register(%s): %v", auth.ID, errRegister)
-		}
+		registerPaceAccount(t, manager, auth, models...)
 	}
 	return manager, cache
+}
+
+// registerPaceAccount registers auth as a claude account serving models, in the global
+// registry for the test and with manager.
+func registerPaceAccount(t *testing.T, manager *Manager, auth *Auth, models ...string) {
+	t.Helper()
+	infos := make([]*registry.ModelInfo, 0, len(models))
+	for _, model := range models {
+		infos = append(infos, &registry.ModelInfo{ID: model})
+	}
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient(auth.ID, "claude", infos)
+	authID := auth.ID
+	t.Cleanup(func() { reg.UnregisterClient(authID) })
+	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("Register(%s): %v", auth.ID, errRegister)
+	}
 }
 
 func paceSelectorFor(cache *quota.Cache) Selector {

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"math"
 	"sort"
 	"time"
 
@@ -97,6 +96,9 @@ func runwayServes(accounts []RunwayAccount, f Forecast, keep map[quota.WindowID]
 		state[i] = append([]RunwayWindow(nil), account.Windows...)
 	}
 	order := make([]int, len(state))
+	expiry := make([]time.Time, len(state))
+	// What the pool may still spend of each window, above what it keeps.
+	spendable := make(map[quota.WindowID]float64)
 	for ahead := time.Duration(0); ahead < runwayHorizon; {
 		step := runwayStep
 		if ahead < runwayFineSpan {
@@ -112,12 +114,12 @@ func runwayServes(accounts []RunwayAccount, f Forecast, keep map[quota.WindowID]
 		}
 		for i := range order {
 			order[i] = i
+			expiry[i] = expiryOf(state[i])
 		}
 		sort.SliceStable(order, func(a, b int) bool {
-			return expiryOf(state[order[a]]).Before(expiryOf(state[order[b]]))
+			return expiry[order[a]].Before(expiry[order[b]])
 		})
-		// What the pool may still spend of each window, above what it keeps.
-		spendable := map[quota.WindowID]float64{}
+		clear(spendable)
 		for _, windows := range state {
 			for _, w := range windows {
 				spendable[w.ID] += w.Remaining
@@ -167,8 +169,5 @@ func expiryOf(windows []RunwayWindow) time.Time {
 			longest = w
 		}
 	}
-	if longest.ResetAt.IsZero() {
-		return time.Unix(math.MaxInt32, 0)
-	}
-	return longest.ResetAt
+	return zeroLast(longest.ResetAt)
 }

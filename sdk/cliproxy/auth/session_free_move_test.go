@@ -77,8 +77,7 @@ func newFreeMoveFixture(t *testing.T) *freeMoveFixture {
 
 // setPace gives authID a seven-day window at remaining with half the week left.
 func (f *freeMoveFixture) setPace(authID string, remaining float64) {
-	now := time.Now()
-	f.cache.PutProbe(authID, []quota.Window{{ID: quota.SevenDay, Remaining: remaining, ResetAt: now.Add(week / 2), Length: week, ObservedAt: now}})
+	f.cache.PutProbe(authID, []quota.Window{liveWindow(quota.SevenDay, remaining, week/2)})
 }
 
 func (f *freeMoveFixture) pick(t *testing.T, firstTurn string) string {

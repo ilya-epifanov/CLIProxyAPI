@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 )
@@ -54,11 +53,7 @@ func newThrottledManager(t *testing.T, throttle ThrottleConfig, sc throttleScena
 		return recorder.err
 	}
 	auth := &Auth{ID: "throttle-" + t.Name(), Provider: "claude", Status: StatusActive}
-	registry.GetGlobalRegistry().RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-opus-5-5"}})
-	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
-	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
-		t.Fatalf("register: %v", errRegister)
-	}
+	registerPaceAccount(t, manager, auth, "claude-opus-5-5")
 
 	now := time.Now()
 	manager.ledger = NewUsageLedger(now.Add(-8 * 24 * time.Hour))
@@ -264,11 +259,7 @@ func TestRunwayCountsAnAccountWithoutTheShortWindow(t *testing.T) {
 	manager, recorder := newThrottledManager(t, guarded, shortScenario)
 	selector, _ := paceSelectorOf(manager.selector)
 	auth := &Auth{ID: "no-short-" + t.Name(), Provider: "claude", Status: StatusActive}
-	registry.GetGlobalRegistry().RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-opus-5-5"}})
-	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
-	if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
-		t.Fatal(errRegister)
-	}
+	registerPaceAccount(t, manager, auth, "claude-opus-5-5")
 	now := time.Now()
 	selector.view.(*quota.Cache).PutProbe(auth.ID, []quota.Window{
 		{ID: quota.SevenDay, Remaining: 0.95, ResetAt: now.Add(84 * time.Hour), Length: week, ObservedAt: now},
@@ -291,11 +282,7 @@ func TestRunwaySizesAnOutlierAsThePoolMedian(t *testing.T) {
 	manager.ledger = NewUsageLedger(now.Add(-8 * 24 * time.Hour))
 	for i, spent := range []float64{400, 400, 1600} {
 		auth := &Auth{ID: fmt.Sprintf("outlier-%s-%d", t.Name(), i), Provider: "claude", Status: StatusActive}
-		registry.GetGlobalRegistry().RegisterClient(auth.ID, "claude", []*registry.ModelInfo{{ID: "claude-opus-5-5"}})
-		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
-		if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
-			t.Fatal(errRegister)
-		}
+		registerPaceAccount(t, manager, auth, "claude-opus-5-5")
 		// Spent 60 h ago, after the window started 68 h ago; it is also the week's demand.
 		manager.ledger.Add(LedgerEntry{At: now.Add(-60 * time.Hour), Provider: "claude", AuthIndex: auth.EnsureIndex(), Model: "claude-opus-5-5", Units: spent}, false)
 		cache.PutProbe(auth.ID, []quota.Window{

@@ -62,6 +62,9 @@ type RunwayStatus struct {
 	Delay time.Duration
 	// ComputedDelay is what a request would wait without Override.
 	ComputedDelay time.Duration
+	// delaySpeed is the speed a request runs at with Delay added to each turn; set with
+	// Delay.
+	delaySpeed float64
 	// Override replaces Speed for the delay when the operator set one; Reason, Speed and
 	// the rest stay what the plan and the guard computed.
 	Override *ThrottleOverride
@@ -77,11 +80,6 @@ type RunwayStatus struct {
 	// leaves them out, so it does not see their limit.
 	Unsized []quota.WindowID
 	Config  ThrottleConfig
-}
-
-// Throttle returns the selector's throttle settings.
-func (s *PaceSelector) Throttle() ThrottleConfig {
-	return s.cfg.Throttle
 }
 
 // behindAffinity returns the selector session affinity wraps, or selector itself.
@@ -114,17 +112,28 @@ func (m *Manager) Ledger() *UsageLedger {
 	return m.ledger
 }
 
-// runwayLocked plans the runway of the pools behind providers for model, the tightest
-// provider deciding, or ok false when the strategy is not pace. The caller holds m.mu.
-func (m *Manager) runwayLocked(providers []string, model string, now time.Time) (RunwayStatus, bool) {
+// observeRunwayLocked observes the pool behind each of providers for model, or returns ok
+// false when the strategy is not pace. The caller holds m.mu; planRunway plans the pools
+// without it.
+func (m *Manager) observeRunwayLocked(providers []string, model string, now time.Time) (*PaceSelector, [][]observedAccount, bool) {
 	pace, ok := paceSelectorOf(m.selector)
 	if !ok || m.ledger == nil {
-		return RunwayStatus{}, false
+		return nil, nil, false
 	}
-	cfg := pace.Throttle()
+	pools := make([][]observedAccount, len(providers))
+	for i, provider := range providers {
+		pools[i] = m.observePoolLocked(pace, provider, model, now)
+	}
+	return pace, pools, true
+}
+
+// planRunway plans the runway of the pools observeRunwayLocked observed behind
+// providers, the tightest provider deciding. It needs no manager lock.
+func (m *Manager) planRunway(pace *PaceSelector, providers []string, pools [][]observedAccount, now time.Time) RunwayStatus {
+	cfg := pace.cfg.Throttle
 	var out RunwayStatus
 	for i, provider := range providers {
-		status := m.providerRunwayLocked(pace, provider, model, now)
+		status := m.providerRunway(cfg, provider, pools[i], now)
 		if o, set := m.throttleOverrides.Get(provider); set {
 			status.Override = &o
 		}
@@ -134,18 +143,18 @@ func (m *Manager) runwayLocked(providers []string, model string, now time.Time) 
 	}
 	out.Config = cfg
 	if cfg.Enabled() {
-		out.ComputedDelay = m.throttleDelay(cfg, out.Speed, out.Reason != RunwayLearning, now)
+		out.ComputedDelay, out.delaySpeed = m.throttleDelay(cfg, out.Speed, out.Reason != RunwayLearning, now)
 		out.Delay = out.ComputedDelay
 		if o := out.Override; o != nil {
-			out.Delay = m.throttleDelay(cfg, o.Speed, true, now)
+			out.Delay, out.delaySpeed = m.throttleDelay(cfg, o.Speed, true, now)
 		}
 	}
-	return out, true
+	return out
 }
 
-// RunSpeed returns the speed requests run at: the override when one is set, else the
+// runSpeed returns the speed requests run at: the override when one is set, else the
 // computed speed; ok is false while learning, when nothing is delayed.
-func (s RunwayStatus) RunSpeed() (speed float64, ok bool) {
+func (s RunwayStatus) runSpeed() (speed float64, ok bool) {
 	if s.Override != nil {
 		return s.Override.Speed, true
 	}
@@ -157,8 +166,8 @@ func (s RunwayStatus) RunSpeed() (speed float64, ok bool) {
 
 // runwayTighter reports whether a throttles harder than b; learning throttles least.
 func runwayTighter(a, b RunwayStatus) bool {
-	speedA, okA := a.RunSpeed()
-	speedB, okB := b.RunSpeed()
+	speedA, okA := a.runSpeed()
+	speedB, okB := b.runSpeed()
 	if !okA || !okB {
 		return okA && !okB
 	}
@@ -166,18 +175,25 @@ func runwayTighter(a, b RunwayStatus) bool {
 }
 
 // throttleDelay turns a speed into a wait: an agent loop of turns cycle long runs at
-// cycle / (cycle + delay). Without a turn length it waits MaxDelay. A pool still
-// learning (sized false) is not delayed.
-func (m *Manager) throttleDelay(cfg ThrottleConfig, speed float64, sized bool, now time.Time) time.Duration {
+// cycle / (cycle + delay), which it returns as the speed the wait gives (1 without a
+// turn length). Without a turn length it waits MaxDelay. A pool still learning (sized
+// false) is not delayed.
+func (m *Manager) throttleDelay(cfg ThrottleConfig, speed float64, sized bool, now time.Time) (time.Duration, float64) {
 	if !sized || speed >= 1 {
-		return 0
+		return 0, 1
 	}
 	cycle, ok := m.ledger.Cycle(now)
-	if !ok || speed <= 0 {
-		return cfg.MaxDelay
+	if !ok {
+		return cfg.MaxDelay, 1
 	}
-	delay := time.Duration(float64(cycle) * (1/speed - 1))
-	return min(delay, cfg.MaxDelay)
+	delay := cfg.MaxDelay
+	if speed > 0 {
+		delay = min(time.Duration(float64(cycle)*(1/speed-1)), cfg.MaxDelay)
+	}
+	if delay <= 0 {
+		return delay, 1
+	}
+	return delay, float64(cycle) / float64(cycle+delay)
 }
 
 // maxSizeOverMedian bounds an account's estimated window size, as a multiple of its
@@ -231,22 +247,22 @@ type guardWindow struct {
 	refill time.Time
 }
 
-// providerRunwayLocked plans one provider's pool. The short window and the first long
+// providerRunway plans one provider's observed pool. The short window and the first long
 // slot share all of the provider's demand, so they are planned together; a further long
 // slot (the Fable window) is spent only by its own models and is planned alone.
-func (m *Manager) providerRunwayLocked(pace *PaceSelector, provider, model string, now time.Time) RunwayStatus {
-	pool := sizePool(m.observePoolLocked(pace, provider, model, now), now)
+func (m *Manager) providerRunway(cfg ThrottleConfig, provider string, observed []observedAccount, now time.Time) RunwayStatus {
+	pool := sizePool(observed, now)
 	if len(pool.order) == 0 {
 		return RunwayStatus{Reason: RunwayLearning, Speed: math.NaN()}
 	}
-	cfg := pace.Throttle()
 	margin := 1 + cfg.Margin
+	keep := pool.keep(cfg.Reserve)
 	var out RunwayStatus
 	for i, group := range pool.order {
 		f := m.ledger.Forecast(provider, group.demand, now)
 		f = Forecast{Hour: f.Hour * margin, Day: f.Day * margin, Week: f.Week * margin}
 		accounts := pool.plans[group.demand]
-		plan := PlanRunway(accounts, f, pool.keep(cfg.Reserve), now)
+		plan := PlanRunway(accounts, f, keep, now)
 		status := RunwayStatus{Reason: RunwayClear, Speed: plan.Speed, DryAt: plan.DryAt, Window: group.demand, Accounts: len(accounts), Demand: f.Hour, Unsized: pool.unsized}
 		if plan.Speed < 1 {
 			status.Reason = RunwayShort
@@ -269,21 +285,23 @@ func (m *Manager) providerRunwayLocked(pace *PaceSelector, provider, model strin
 // An account needs every long window observed; the short one it may lack. The caller
 // holds m.mu.
 func (m *Manager) observePoolLocked(pace *PaceSelector, provider, model string, now time.Time) []observedAccount {
-	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
-	pool := candidates
-	for _, nc := range notCandidates {
-		if nc.Reason == "cooldown" {
-			pool = append(pool, nc.Auth)
+	accounts := m.rankingPoolLocked(provider, model, now)
+	// Candidates first, then the accounts cooling down.
+	pool := make([]rankingAccount, 0, len(accounts))
+	for _, account := range accounts {
+		if !account.blocked {
+			pool = append(pool, account)
 		}
 	}
-	selectionModels := m.selectionModelsLocked(m.selector, pool, model)
-	var out []observedAccount
-	for i, auth := range pool {
-		selectionModel, found := selectionModels[auth.ID]
-		if !found {
-			selectionModel = model
+	usable := len(pool)
+	for _, account := range accounts {
+		if account.blocked && account.reason == blockReasonCooldown {
+			pool = append(pool, account)
 		}
-		windows, ok := pace.windowsOf(auth, selectionModel)
+	}
+	var out []observedAccount
+	for i, account := range pool {
+		windows, ok := pace.windowsOf(account.auth, account.model)
 		if !ok || !windows.Complete {
 			continue
 		}
@@ -291,7 +309,7 @@ func (m *Manager) observePoolLocked(pace *PaceSelector, provider, model string, 
 			windows: map[quota.WindowID]quota.Window{},
 			sizes:   map[quota.WindowID]float64{},
 			burns:   map[quota.WindowID]float64{},
-			usable:  i < len(candidates),
+			usable:  i < usable,
 		}
 		// An account without the short window is not capped by it, as in the selector.
 		if windows.HasShort {
@@ -305,7 +323,8 @@ func (m *Manager) observePoolLocked(pace *PaceSelector, provider, model string, 
 			}
 			obs.groups = append(obs.groups, group)
 		}
-		index := auth.EnsureIndex()
+		// Every stored account has its index; EnsureIndex would write it under the read lock.
+		index := account.auth.Index
 		for id, w := range obs.windows {
 			m.ledger.Observe(index, w)
 			if units, sized := m.ledger.Capacity(index, w, now); sized {
@@ -443,17 +462,17 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	}
 	now := time.Now()
 	m.mu.RLock()
-	status, ok := m.runwayLocked(providers, model, now)
+	pace, pools, ok := m.observeRunwayLocked(providers, model, now)
 	m.mu.RUnlock()
-	if !ok || !status.Config.Enabled() {
+	if !ok {
 		return nil
 	}
-	speed := 1.0
-	if cycle, known := m.ledger.Cycle(now); known && status.Delay > 0 {
-		speed = float64(cycle) / float64(cycle+status.Delay)
+	status := m.planRunway(pace, providers, pools, now)
+	if !status.Config.Enabled() {
+		return nil
 	}
 	for _, provider := range providers {
-		m.ledger.SetSpeed(provider, speed, now)
+		m.ledger.SetSpeed(provider, status.delaySpeed, now)
 	}
 	if status.Delay <= 0 {
 		return nil
@@ -466,7 +485,7 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	}).Info(throttleLogMessage(status, now))
 	wait := m.throttleWait
 	if wait == nil {
-		wait = waitContext
+		wait = realContinuityClock{}.Wait
 	}
 	return wait(ctx, status.Delay)
 }
@@ -483,16 +502,4 @@ func throttleLogMessage(status RunwayStatus, now time.Time) string {
 		msg += fmt.Sprintf(", dry in %s at full speed", status.DryAt.Sub(now).Round(time.Minute))
 	}
 	return msg + ")"
-}
-
-// waitContext waits d or until ctx ends, returning ctx's error then.
-func waitContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

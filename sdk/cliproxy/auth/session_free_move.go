@@ -84,7 +84,7 @@ func freeMoveReason(prev, next sessionContext) string {
 func sessionContextOf(provider string, opts cliproxyexecutor.Options, now time.Time) sessionContext {
 	out := sessionContext{seenAt: now, cacheTTL: promptCacheTTL(provider, opts.OriginalRequest)}
 	for _, turn := range cliproxysession.ExtractCanonicalTurns(opts.SourceFormat, opts.OriginalRequest) {
-		if role := strings.ToLower(strings.TrimSpace(turn.Role)); role != "system" && role != "developer" {
+		if turn.Role != "system" {
 			out.anchor = cliproxysession.FastTurnFingerprint(turn)
 			break
 		}

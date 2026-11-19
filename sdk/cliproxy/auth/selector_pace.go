@@ -107,6 +107,12 @@ type Ranked struct {
 	Stale      bool
 }
 
+// unknownRanked is auth's entry before any window is classified: ClassUnknown, with the
+// NaN pace and short-remaining values that mean "absent".
+func unknownRanked(auth *Auth) Ranked {
+	return Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN()}
+}
+
 // Ranker is implemented by selectors that can explain their order. ctx carries the
 // selection models (withSelectionModels) as it does for Pick.
 type Ranker interface {
@@ -188,7 +194,7 @@ func (s *PaceSelector) Rank(ctx context.Context, auths []*Auth, model string, no
 // classify ranks one account against the windows of its selection model, which is the
 // model the account will serve after its alias, not the route model.
 func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time) Ranked {
-	r := Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN()}
+	r := unknownRanked(auth)
 	windows, ok := s.windowsOf(auth, selectionModel)
 	if !ok {
 		return r
@@ -236,7 +242,7 @@ func (s *PaceSelector) windowsOf(auth *Auth, selectionModel string) (quota.Accou
 	if !tracked {
 		return quota.AccountWindows{}, false
 	}
-	// auth is a candidate clone, so reading its signals here is safe.
+	// auth is a clone or the caller holds m.mu, so reading its signals here is safe.
 	snapshot, ok := s.view.Lookup(auth.ID, auth.Provider, auth.Quota.Signals, auth.Quota.ObservedAt)
 	if !ok {
 		return quota.AccountWindows{}, false

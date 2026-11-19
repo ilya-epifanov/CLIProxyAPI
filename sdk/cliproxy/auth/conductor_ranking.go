@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -46,13 +45,19 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	m.mu.RLock()
 	selector := m.selector
 	var out Ranking
-	candidates, notCandidates := m.rankingCandidatesLocked(provider, model, now)
+	candidates, notCandidates, selectionModels := m.rankingCandidatesLocked(provider, model, now)
 	out.NotCandidates = notCandidates
-	selectionModels := m.selectionModelsLocked(selector, candidates, model)
-	if runway, ok := m.runwayLocked([]string{provider}, model, now); ok {
+	pace, pools, paced := m.observeRunwayLocked([]string{provider}, model, now)
+	m.mu.RUnlock()
+
+	if paced {
+		runway := m.planRunway(pace, []string{provider}, pools, now)
 		out.Runway = &runway
 	}
-	m.mu.RUnlock()
+	if _, ok := paceSelectorOf(selector); !ok {
+		// Only the pace selector ranks by selection model.
+		selectionModels = nil
+	}
 
 	sort.Slice(out.NotCandidates, func(i, j int) bool { return out.NotCandidates[i].Auth.ID < out.NotCandidates[j].Auth.ID })
 	ctx = withSelectionModels(ctx, selectionModels)
@@ -86,15 +91,26 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	return out
 }
 
-// rankingCandidatesLocked splits provider's accounts that serve model into candidates
-// and accounts blocked right now, both as clones. With model empty, only credential-wide
-// blocks count. The caller holds m.mu.
-func (m *Manager) rankingCandidatesLocked(provider, model string, now time.Time) ([]*Auth, []NotCandidate) {
+// rankingAccount is one of a provider's accounts as m.auths holds it, not cloned, so it
+// is read only while m.mu is held.
+type rankingAccount struct {
+	auth *Auth
+	// model is the account's selection model; empty when the route model is.
+	model string
+	// blocked: the account cannot serve model right now, for reason until until.
+	blocked bool
+	reason  blockReason
+	until   time.Time
+}
+
+// rankingPoolLocked lists provider's accounts that serve model, with their selection
+// models and blocks. With model empty, only credential-wide blocks count. The caller
+// holds m.mu.
+func (m *Manager) rankingPoolLocked(provider, model string, now time.Time) []rankingAccount {
 	targetKey := canonicalSchedulingProvider(provider)
 	model = strings.TrimSpace(model)
 	registryRef := registry.GetGlobalRegistry()
-	var candidates []*Auth
-	var notCandidates []NotCandidate
+	var out []rankingAccount
 	for _, auth := range m.auths {
 		if auth == nil || canonicalSchedulingProvider(executorKeyFromAuth(auth)) != targetKey {
 			continue
@@ -102,21 +118,43 @@ func (m *Manager) rankingCandidatesLocked(provider, model string, now time.Time)
 		if model != "" && !m.authSupportsRouteModel(registryRef, auth, model) {
 			continue
 		}
-		checkModel := ""
+		account := rankingAccount{auth: auth}
 		if model != "" {
-			checkModel = m.selectionModelForAuth(auth, model)
+			account.model = m.selectionModelForAuth(auth, model)
 		}
-		if blocked, reason, until := isAuthBlockedForModel(auth, checkModel, now); blocked {
+		account.blocked, account.reason, account.until = isAuthBlockedForModel(auth, account.model, now)
+		out = append(out, account)
+	}
+	return out
+}
+
+// rankingCandidatesLocked splits provider's accounts that serve model into candidates
+// and accounts blocked right now, both as clones, and maps each account's ID to its
+// selection model (nil with model empty). With model empty, only credential-wide blocks
+// count. The caller holds m.mu.
+func (m *Manager) rankingCandidatesLocked(provider, model string, now time.Time) ([]*Auth, []NotCandidate, map[string]string) {
+	accounts := m.rankingPoolLocked(provider, model, now)
+	var selectionModels map[string]string
+	if strings.TrimSpace(model) != "" {
+		selectionModels = make(map[string]string, len(accounts))
+	}
+	var candidates []*Auth
+	var notCandidates []NotCandidate
+	for _, account := range accounts {
+		if selectionModels != nil {
+			selectionModels[account.auth.ID] = account.model
+		}
+		if account.blocked {
 			notCandidates = append(notCandidates, NotCandidate{
-				Auth:   auth.Clone(),
-				Reason: notCandidateReason(auth, reason),
-				Until:  until,
+				Auth:   account.auth.Clone(),
+				Reason: notCandidateReason(account.auth, account.reason),
+				Until:  account.until,
 			})
 			continue
 		}
-		candidates = append(candidates, auth.Clone())
+		candidates = append(candidates, account.auth.Clone())
 	}
-	return candidates, notCandidates
+	return candidates, notCandidates, selectionModels
 }
 
 func notCandidateReason(auth *Auth, reason blockReason) string {
@@ -137,7 +175,7 @@ func unrankedEntries(auths []*Auth) []Ranked {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	out := make([]Ranked, 0, len(sorted))
 	for _, auth := range sorted {
-		out = append(out, Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN()})
+		out = append(out, unknownRanked(auth))
 	}
 	return out
 }
