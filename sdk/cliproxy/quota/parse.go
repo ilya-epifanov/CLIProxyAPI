@@ -21,9 +21,9 @@ const (
 	unixMillisThreshold = 1e11
 )
 
-// ParseHeaderSignals parses the passive quota signals stored for an account.
+// parseHeaderSignals parses the passive quota signals stored for an account.
 // Keys match case-insensitively. Providers other than claude and codex give nil.
-func ParseHeaderSignals(provider string, signals map[string]string, observedAt time.Time) []Window {
+func parseHeaderSignals(provider string, signals map[string]string, observedAt time.Time) []Window {
 	if len(signals) == 0 {
 		return nil
 	}
@@ -45,9 +45,9 @@ func ParseHeaderSignals(provider string, signals map[string]string, observedAt t
 func ParseProbe(provider string, body []byte, observedAt time.Time) ([]Window, error) {
 	switch normalizeProvider(provider) {
 	case "claude":
-		return ParseClaudeUsage(body, observedAt)
+		return parseClaudeUsage(body, observedAt)
 	case "codex":
-		return ParseCodexUsage(body, observedAt)
+		return parseCodexUsage(body, observedAt)
 	default:
 		return nil, fmt.Errorf("quota: unsupported probe provider %q", provider)
 	}

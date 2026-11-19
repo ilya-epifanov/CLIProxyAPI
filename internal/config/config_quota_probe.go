@@ -1,15 +1,18 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
-func (cfg *Config) setQuotaProbeDefaults() {
-	cfg.QuotaProbe.Enable = false
-	cfg.QuotaProbe.RefreshInterval = DefaultQuotaProbeRefreshInterval
-	cfg.QuotaProbe.MinRefreshInterval = DefaultQuotaProbeMinRefreshInterval
-}
+const (
+	DefaultQuotaProbeRefreshInterval    = 15 * time.Minute
+	DefaultQuotaProbeMinRefreshInterval = 5 * time.Minute
+)
 
-// normalizeQuotaProbe applies the defaults for zero intervals and rejects a
-// schedule that would read an account more often than the minimum allows.
+// normalizeQuotaProbe is the only place the quota-probe defaults are applied:
+// it fills zero intervals and rejects a schedule that would read an account
+// more often than the minimum allows.
 func (cfg *Config) normalizeQuotaProbe() error {
 	probe := &cfg.QuotaProbe
 	if probe.RefreshInterval < 0 || probe.MinRefreshInterval < 0 {

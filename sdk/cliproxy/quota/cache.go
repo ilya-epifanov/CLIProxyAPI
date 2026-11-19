@@ -69,7 +69,7 @@ func (c *Cache) Lookup(authID, provider string, signals map[string]string, signa
 	probe := c.probes[authID]
 	c.mu.RUnlock()
 
-	headers := ParseHeaderSignals(provider, signals, signalsAt)
+	headers := parseHeaderSignals(provider, signals, signalsAt)
 	if len(probe) == 0 && len(headers) == 0 {
 		return Snapshot{}, false
 	}

@@ -33,9 +33,9 @@ func parseClaudeHeaders(signals map[string]string, observedAt time.Time) []Windo
 	return out
 }
 
-// ParseClaudeUsage parses the body of GET api.anthropic.com/api/oauth/usage.
+// parseClaudeUsage parses the body of GET api.anthropic.com/api/oauth/usage.
 // It mirrors the panel's buildClaudeQuotaWindows for the windows routing uses.
-func ParseClaudeUsage(body []byte, observedAt time.Time) ([]Window, error) {
+func parseClaudeUsage(body []byte, observedAt time.Time) ([]Window, error) {
 	root, err := parseJSONObject("claude", body)
 	if err != nil {
 		return nil, err

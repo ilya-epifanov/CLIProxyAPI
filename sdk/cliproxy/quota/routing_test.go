@@ -38,8 +38,8 @@ func TestIsFableModel(t *testing.T) {
 		"":                         false,
 	}
 	for model, want := range tests {
-		if got := IsFableModel(model); got != want {
-			t.Errorf("IsFableModel(%q) = %v, want %v", model, got, want)
+		if got := isFableModel(model); got != want {
+			t.Errorf("isFableModel(%q) = %v, want %v", model, got, want)
 		}
 	}
 }

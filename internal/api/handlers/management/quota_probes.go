@@ -7,10 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/quotaprobe"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -58,7 +58,7 @@ func (h *Handler) DoQuotaProbe(ctx context.Context, auth *coreauth.Auth, request
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: defaultAPICallTimeout, Transport: h.quotaProbeTransports.get(h.apiCallProxyCandidates(auth))}
+	client := &http.Client{Timeout: defaultAPICallTimeout, Transport: quotaProbeTransport(h.apiCallProxyCandidates(auth))}
 	resp, err := client.Do(req)
 	if err != nil {
 		return quotaprobe.Response{}, fmt.Errorf("%s request failed: %w", request.Name, err)
@@ -71,26 +71,22 @@ func (h *Handler) DoQuotaProbe(ctx context.Context, auth *coreauth.Auth, request
 	return quotaprobe.Response{StatusCode: resp.StatusCode, Body: string(body)}, nil
 }
 
-// quotaProbeTransports keeps one transport per proxy candidate list, so the probes,
-// which run every few minutes per account, reuse their connections. The transport is
-// the one apiCallTransport builds for the same candidates.
-type quotaProbeTransports struct {
-	mu         sync.Mutex
-	transports map[string]http.RoundTripper
-}
+// quotaProbeTransportCache keeps one transport per proxy candidate list, so the
+// probes, which run every few minutes per account, reuse their connections. The
+// transport is the one proxyCandidatesTransport builds for the same candidates.
+var quotaProbeTransportCache = helps.NewTransportCache[string](helps.DefaultTransportCacheCapacity)
 
-func (t *quotaProbeTransports) get(proxyCandidates []string) http.RoundTripper {
-	key := strings.Join(proxyCandidates, "\n")
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if transport, ok := t.transports[key]; ok {
-		return transport
+func quotaProbeTransport(proxyCandidates []string) http.RoundTripper {
+	transport, err := quotaProbeTransportCache.Get(strings.Join(proxyCandidates, "\n"), func() (*http.Transport, error) {
+		t, ok := proxyCandidatesTransport(proxyCandidates).(*http.Transport)
+		if !ok {
+			return nil, errors.New("quota probe: proxy transport is not *http.Transport")
+		}
+		return t, nil
+	})
+	if err != nil {
+		return proxyCandidatesTransport(proxyCandidates)
 	}
-	if t.transports == nil {
-		t.transports = map[string]http.RoundTripper{}
-	}
-	transport := proxyCandidatesTransport(proxyCandidates)
-	t.transports[key] = transport
 	return transport
 }
 

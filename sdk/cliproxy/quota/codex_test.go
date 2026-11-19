@@ -133,9 +133,9 @@ func TestParseCodexUsage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseCodexUsage([]byte(tt.body), testObservedAt)
+			got, err := parseCodexUsage([]byte(tt.body), testObservedAt)
 			if err != nil {
-				t.Fatalf("ParseCodexUsage: %v", err)
+				t.Fatalf("parseCodexUsage: %v", err)
 			}
 			assertWindows(t, got, tt.want)
 		})
@@ -144,7 +144,7 @@ func TestParseCodexUsage(t *testing.T) {
 
 func TestParseCodexUsageInvalid(t *testing.T) {
 	for _, body := range []string{``, `{"rate_limit": {`, `[1]`, `null`} {
-		if _, err := ParseCodexUsage([]byte(body), testObservedAt); err == nil {
+		if _, err := parseCodexUsage([]byte(body), testObservedAt); err == nil {
 			t.Errorf("body %q: expected error", body)
 		}
 	}

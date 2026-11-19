@@ -89,9 +89,9 @@ func TestParseClaudeUsage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseClaudeUsage([]byte(tt.body), testObservedAt)
+			got, err := parseClaudeUsage([]byte(tt.body), testObservedAt)
 			if err != nil {
-				t.Fatalf("ParseClaudeUsage: %v", err)
+				t.Fatalf("parseClaudeUsage: %v", err)
 			}
 			assertWindows(t, got, tt.want)
 		})
@@ -100,7 +100,7 @@ func TestParseClaudeUsage(t *testing.T) {
 
 func TestParseClaudeUsageInvalid(t *testing.T) {
 	for _, body := range []string{``, `{"five_hour":`, `[]`, `"text"`} {
-		if _, err := ParseClaudeUsage([]byte(body), testObservedAt); err == nil {
+		if _, err := parseClaudeUsage([]byte(body), testObservedAt); err == nil {
 			t.Errorf("body %q: expected error", body)
 		}
 	}

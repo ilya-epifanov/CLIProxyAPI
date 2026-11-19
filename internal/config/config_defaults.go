@@ -1,15 +1,9 @@
 package config
 
-import "time"
-
 const (
 	DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 	DefaultPprofAddr             = "127.0.0.1:8316"
-
-	DefaultQuotaProbeRefreshInterval    = 15 * time.Minute
-	DefaultQuotaProbeMinRefreshInterval = 5 * time.Minute
-
-	DefaultAuthDir              = "~/.cli-proxy-api"
-	DefaultDiscoveryServiceType = "_ai-gateway._tcp"
-	DefaultKVStorePath          = "kv.db"
+	DefaultAuthDir               = "~/.cli-proxy-api"
+	DefaultDiscoveryServiceType  = "_ai-gateway._tcp"
+	DefaultKVStorePath           = "kv.db"
 )

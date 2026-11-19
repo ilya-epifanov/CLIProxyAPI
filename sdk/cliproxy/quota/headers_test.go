@@ -67,7 +67,7 @@ func TestParseHeaderSignalsClaude(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertWindows(t, ParseHeaderSignals(" Claude", tt.signals, testObservedAt), tt.want)
+			assertWindows(t, parseHeaderSignals(" Claude", tt.signals, testObservedAt), tt.want)
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestParseHeaderSignalsCodex(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertWindows(t, ParseHeaderSignals("codex", tt.signals, testObservedAt), tt.want)
+			assertWindows(t, parseHeaderSignals("codex", tt.signals, testObservedAt), tt.want)
 		})
 	}
 }
@@ -182,7 +182,7 @@ func TestParseHeaderSignalsOtherProvider(t *testing.T) {
 		"X-Codex-Primary-Used-Percent":               "50",
 	}
 	for _, provider := range []string{"gemini", "devin", ""} {
-		if got := ParseHeaderSignals(provider, signals, testObservedAt); got != nil {
+		if got := parseHeaderSignals(provider, signals, testObservedAt); got != nil {
 			t.Errorf("provider %q: got %+v, want nil", provider, got)
 		}
 	}

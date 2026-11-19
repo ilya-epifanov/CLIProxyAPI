@@ -124,10 +124,10 @@ func codexHeaderWindow(signals map[string]string, prefix string, observedAt time
 	return w
 }
 
-// ParseCodexUsage parses the body of GET chatgpt.com/backend-api/wham/usage.
+// parseCodexUsage parses the body of GET chatgpt.com/backend-api/wham/usage.
 // It reads the main rate_limit only, mirroring the panel's
 // buildCodexQuotaWindows, and accepts the camelCase variants the panel accepts.
-func ParseCodexUsage(body []byte, observedAt time.Time) ([]Window, error) {
+func parseCodexUsage(body []byte, observedAt time.Time) ([]Window, error) {
 	root, err := parseJSONObject("codex", body)
 	if err != nil {
 		return nil, err

@@ -62,6 +62,8 @@ type Entry struct {
 	// last successful probe.
 	Error     *Failure            `json:"error"`
 	Responses map[string]Response `json:"responses"`
+	// authID is the auth ID the quota cache is keyed by; it is not serialized.
+	authID string
 }
 
 // CooldownReleaser clears a quota cooldown that a read shows is over;
@@ -105,8 +107,6 @@ type Prober struct {
 
 	mu      sync.Mutex
 	entries map[string]*Entry
-	// authIDs maps auth_index to auth ID for the cache, which is keyed by ID.
-	authIDs map[string]string
 	queue   []string
 	// inflight holds every queued or running probe; the probe closes its
 	// channel when it is recorded.
@@ -131,7 +131,6 @@ func New(opts Options) *Prober {
 		cooldowns:       opts.Cooldowns,
 		requests:        make(chan string, refreshRequests),
 		entries:         map[string]*Entry{},
-		authIDs:         map[string]string{},
 		inflight:        map[string]chan struct{}{},
 	}
 }
@@ -191,13 +190,11 @@ func (p *Prober) Refresh(ctx context.Context, authIndex string) (Entry, error) {
 		return *p.entries[authIndex], nil
 	}
 	done, inflight := p.inflight[authIndex]
-	if !inflight {
-		done = make(chan struct{})
-		p.inflight[authIndex] = done
-	}
 	// A requested probe goes ahead of scheduled ones; a running one is just awaited.
-	if !inflight || p.dequeue(authIndex) {
-		p.queue = append([]string{authIndex}, p.queue...)
+	if !inflight {
+		done = p.enqueueLocked(authIndex, true)
+	} else if p.dequeue(authIndex) {
+		p.enqueueLocked(authIndex, true)
 	}
 	p.mu.Unlock()
 	p.signal()
@@ -263,8 +260,7 @@ drain:
 		if !probed || !p.dueLocked(authIndex, p.minInterval, now) {
 			continue
 		}
-		p.queue = append([]string{authIndex}, p.queue...)
-		p.inflight[authIndex] = make(chan struct{})
+		p.enqueueLocked(authIndex, true)
 	}
 }
 
@@ -320,20 +316,35 @@ func (p *Prober) enqueueDue() {
 		if !p.dueLocked(authIndex, p.refreshInterval, now) {
 			continue
 		}
-		p.queue = append(p.queue, authIndex)
-		p.inflight[authIndex] = make(chan struct{})
+		p.enqueueLocked(authIndex, false)
 	}
 	for authIndex := range p.entries {
 		if !present[authIndex] {
 			if _, queued := p.inflight[authIndex]; !queued {
+				entry := p.entries[authIndex]
 				delete(p.entries, authIndex)
 				if p.cache != nil {
-					p.cache.Forget(p.authIDs[authIndex])
+					p.cache.Forget(entry.authID)
 				}
-				delete(p.authIDs, authIndex)
 			}
 		}
 	}
+}
+
+// enqueueLocked queues authIndex at the front or the back and returns its inflight
+// channel, creating it when missing: every queued index has one. The caller holds mu.
+func (p *Prober) enqueueLocked(authIndex string, front bool) chan struct{} {
+	done, ok := p.inflight[authIndex]
+	if !ok {
+		done = make(chan struct{})
+		p.inflight[authIndex] = done
+	}
+	if front {
+		p.queue = append([]string{authIndex}, p.queue...)
+	} else {
+		p.queue = append(p.queue, authIndex)
+	}
+	return done
 }
 
 // dequeue removes authIndex from the queue and reports whether it was there.
@@ -409,13 +420,13 @@ func (p *Prober) probe(ctx context.Context, authIndex string) {
 		p.storeWindows(ctx, auth, responses[plan[0].Name], sentAt, now)
 	}
 	p.mu.Lock()
-	if auth != nil {
-		p.authIDs[authIndex] = auth.ID
-	}
 	entry := p.entries[authIndex]
 	if entry == nil {
 		entry = &Entry{AuthIndex: authIndex, Responses: map[string]Response{}}
 		p.entries[authIndex] = entry
+	}
+	if auth != nil {
+		entry.authID = auth.ID
 	}
 	entry.AttemptedAt = now
 	entry.Error = failure
