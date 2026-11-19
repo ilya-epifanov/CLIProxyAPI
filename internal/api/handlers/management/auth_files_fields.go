@@ -97,6 +97,9 @@ func (h *Handler) PatchAuthFileStatus(c *gin.Context) {
 	}
 
 	if coreauth.IsConfigAPIKeyAuth(targetAuth) {
+		if c.GetBool(ConfigV8ContextKey) && h.rejectReadOnlyConfig(c) {
+			return
+		}
 		h.mu.Lock()
 		handled, errToggle := toggleConfigAPIKeyExcludedAll(h.cfg, targetAuth, *req.Disabled)
 		if errToggle != nil {

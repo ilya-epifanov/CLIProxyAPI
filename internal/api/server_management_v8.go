@@ -17,7 +17,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8 := s.engine.Group(prefix)
 	v8.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware(), func(c *gin.Context) {
 		c.Set(management.ConfigV8ContextKey, true)
-	})
+	}, s.mgmt.ConfigWriteGuard())
 	v8.GET("/config", s.mgmt.ConfigV8)
 	v8.PUT("/config", s.mgmt.ConfigV8)
 	v8.PATCH("/config", s.mgmt.ConfigV8)
@@ -28,6 +28,7 @@ func (s *Server) registerManagementV8Routes() {
 	}
 
 	v8.GET("/server/latest-version", s.mgmt.GetLatestVersion)
+	v8.GET("/server/capabilities", s.mgmt.GetServerCapabilities)
 	v8.POST("/requests/api-call", s.mgmt.APICall)
 	v8.POST("/routing/cooldown/reset", s.mgmt.ResetQuota)
 	v8.GET("/routing/model-definitions/:channel", s.mgmt.GetStaticModelDefinitions)
