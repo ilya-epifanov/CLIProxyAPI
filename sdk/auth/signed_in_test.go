@@ -2,12 +2,10 @@ package auth
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/MoeForge/moego/json"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -38,14 +36,7 @@ func TestManagerLoginStampsSignedInAt(t *testing.T) {
 			}
 			after := time.Now()
 
-			raw, errRead := os.ReadFile(filePath)
-			if errRead != nil {
-				t.Fatal(errRead)
-			}
-			var saved coreauth.Auth
-			if errUnmarshal := json.Unmarshal(raw, &saved.Metadata); errUnmarshal != nil {
-				t.Fatal(errUnmarshal)
-			}
+			saved := coreauth.Auth{Metadata: readCodexRefreshFixture(t, filePath)}
 			signedInAt, ok := saved.SignedInAt()
 			if !ok || signedInAt.Before(before) || signedInAt.After(after) {
 				t.Fatalf("saved signed_in_at = %v (%t), want the login time", saved.Metadata[coreauth.MetadataKeySignedInAt], ok)
