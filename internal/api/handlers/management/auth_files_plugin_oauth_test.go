@@ -623,6 +623,9 @@ func TestV8PluginMultiPortalOAuthListLoginPollAndRelogin(t *testing.T) {
 	if strings.Contains(string(rawSaved), `"portal":"zcode-bigmodel"`) {
 		t.Fatalf("replaced target file retained stale portal metadata: %s", string(rawSaved))
 	}
+	if !strings.Contains(string(rawSaved), `"signed_in_at":"`) {
+		t.Fatalf("plugin re-login did not record signed_in_at: %s", string(rawSaved))
+	}
 
 	// 2. Re-login omitting "provider" (only passing credential "name") on cold start, and verify mismatched email is rejected
 	pollEmail = "wrong-user@example.com"

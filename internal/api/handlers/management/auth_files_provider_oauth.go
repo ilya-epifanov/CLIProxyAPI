@@ -570,6 +570,7 @@ func (h *Handler) commitAndCompleteBuiltinOAuthSession(ctx context.Context, stat
 	if errGuard := claimOAuthSessionCommit(state, sessionProvider); errGuard != nil {
 		return "", false
 	}
+	coreauth.MarkSignedIn(record, time.Now())
 	savedPath, errSave := h.saveTokenRecord(ctx, record)
 	if !alwaysTrackOutcome && !isTargeted {
 		if errSave != nil {
@@ -1402,8 +1403,10 @@ func (h *Handler) GetAuthStatus(c *gin.Context) {
 						prevEpoch = existing.RegistrationEpoch
 					}
 				}
+				signedInAt := time.Now()
 				for _, record := range records {
 					applySessionProxyToAuthRecord(record, sessionProxyURL)
+					coreauth.MarkSignedIn(record, signedInAt)
 				}
 				if errSave := h.savePluginLoginRecords(ctx, records); errSave != nil {
 					log.WithError(errSave).WithField("provider", provider).Error("failed to save plugin auth tokens")

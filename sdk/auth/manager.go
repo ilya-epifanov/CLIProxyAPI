@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MoeForge/moego/json"
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
@@ -75,6 +76,7 @@ func (m *Manager) Login(ctx context.Context, provider string, cfg *config.Config
 	if record == nil {
 		return nil, "", fmt.Errorf("cliproxy auth: authenticator %s returned nil record", provider)
 	}
+	coreauth.MarkSignedIn(record, time.Now())
 
 	if m.store == nil {
 		return record, "", nil

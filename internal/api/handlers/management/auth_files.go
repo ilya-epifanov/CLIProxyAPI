@@ -808,6 +808,9 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quota authFileQu
 		if oauthProvider := authOAuthProvider(auth); oauthProvider != "" {
 			entry["oauth_provider"] = oauthProvider
 		}
+		if signedInAt, okSignedIn := auth.SignedInAt(); okSignedIn {
+			entry[coreauth.MetadataKeySignedInAt] = signedInAt.UTC().Format(time.RFC3339)
+		}
 		nowUTC := time.Now().UTC()
 		if exp, okExp := auth.AccessTokenExpirationTime(); okExp && !exp.IsZero() && exp.Unix() > 0 {
 			entry["access_token_expires_at"] = exp.UTC().Format(time.RFC3339)
