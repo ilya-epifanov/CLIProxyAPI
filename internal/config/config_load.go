@@ -290,6 +290,10 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 		cfg.MaxRetryCredentials = 0
 	}
 
+	if errQuota := cfg.normalizeQuotaProbe(); errQuota != nil {
+		return nil, errQuota
+	}
+
 	cfg.NormalizePluginsConfig()
 	cfg.NormalizeClaudeConfig()
 	if errResolvePluginsDir := cfg.ResolvePluginsDir(); errResolvePluginsDir != nil && cfg.Plugins.Enabled {
