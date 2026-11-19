@@ -985,7 +985,9 @@ func selectionArgForSelector(selector Selector, routeModel string) string {
 func selectorContextForAvailableAuths(ctx context.Context, selector Selector, routeModel string) context.Context {
 	ctx = withWeightedSelectorStateModel(ctx, selector, routeModel)
 	if !isBuiltInSelector(selector) {
-		if _, sessionAffinity := selector.(*SessionAffinitySelector); !sessionAffinity {
+		_, sessionAffinity := selector.(*SessionAffinitySelector)
+		_, pace := selector.(*PaceSelector)
+		if !sessionAffinity && !pace {
 			return ctx
 		}
 	}
@@ -993,6 +995,22 @@ func selectorContextForAvailableAuths(ctx context.Context, selector Selector, ro
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, prevalidatedAuthCandidatesKey{}, true)
+}
+
+// selectionModelsLocked maps each candidate's ID to its selection model for selectors
+// that rank candidates by the model each one will serve (PaceSelector, also behind
+// SessionAffinitySelector), nil otherwise. The caller holds m.mu.
+func (m *Manager) selectionModelsLocked(selector Selector, auths []*Auth, routeModel string) map[string]string {
+	if _, pace := paceSelectorOf(selector); !pace || strings.TrimSpace(routeModel) == "" {
+		return nil
+	}
+	models := make(map[string]string, len(auths))
+	for _, candidate := range auths {
+		if candidate != nil {
+			models[candidate.ID] = m.selectionModelForAuth(candidate, routeModel)
+		}
+	}
+	return models
 }
 
 func (m *Manager) transientlyUnavailableSessionAffinityAuthIDs(ctx context.Context, selector Selector, affinityCandidates []*Auth, routeModel string, now time.Time, clientHeaders ...http.Header) map[string]struct{} {
@@ -2391,6 +2409,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		accountingAuths = fullAvailable
 	}
 	transientAuthIDs := m.transientlyUnavailableSessionAffinityAuthIDs(ctx, selector, affinityCandidates, model, now, opts.Headers)
+	selectionModels := m.selectionModelsLocked(selector, selectorAuths, model)
 	m.mu.RUnlock()
 
 	selected, handled, excluded, errPick := m.pickViaPluginScheduler(ctx, pluginScheduler, provider, []string{provider}, model, opts, tried, available)
@@ -2430,6 +2449,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		}
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
+		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}
@@ -2889,6 +2909,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		accountingAuths = fullAvailable
 	}
 	transientAuthIDs := m.transientlyUnavailableSessionAffinityAuthIDs(ctx, selector, affinityCandidates, model, now, opts.Headers)
+	selectionModels := m.selectionModelsLocked(selector, selectorAuths, model)
 	m.mu.RUnlock()
 
 	selected, handled, excluded, errPick := m.pickViaPluginScheduler(ctx, pluginScheduler, "mixed", providers, model, opts, tried, available)
@@ -2928,6 +2949,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
+		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}

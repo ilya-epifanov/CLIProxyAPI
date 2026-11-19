@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	log "github.com/sirupsen/logrus"
 )
@@ -61,6 +62,7 @@ type routingRuntimeState struct {
 	sessionAffinityTTL       time.Duration
 	sessionAffinitySubagents bool
 	sessionAffinityRebindOn  string
+	pace                     coreauth.PaceConfig
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
@@ -79,6 +81,19 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		state.strategy = "weighted-round-robin"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
+	case "pace":
+		state.strategy = "pace"
+		state.pace = coreauth.PaceConfig{
+			BurstReserve:  cfg.Routing.Pace.BurstReserveOrDefault(),
+			PaceTolerance: cfg.Routing.Pace.PaceToleranceOrDefault(),
+			StaleAfter:    cfg.Routing.Pace.StaleAfterOrDefault(),
+			Throttle: coreauth.ThrottleConfig{
+				MaxDelay:     cfg.Routing.Pace.Throttle.MaxDelay,
+				Margin:       cfg.Routing.Pace.Throttle.MarginOrDefault(),
+				Reserve:      cfg.Routing.Pace.Throttle.ReserveOrDefault(),
+				GuardHorizon: cfg.Routing.Pace.Throttle.GuardHorizonOrDefault(),
+			},
+		}
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -103,11 +118,12 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	return state
 }
 
-func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
-	return newRoutingSelectorWithExisting(state, nil)
+// newRoutingSelector builds the selector for state. quotaView feeds the pace strategy.
+func newRoutingSelector(state routingRuntimeState, quotaView quota.View) coreauth.Selector {
+	return newRoutingSelectorWithExisting(state, quotaView, nil)
 }
 
-func newRoutingSelectorWithExisting(state routingRuntimeState, existing coreauth.Selector) coreauth.Selector {
+func newRoutingSelectorWithExisting(state routingRuntimeState, quotaView quota.View, existing coreauth.Selector) coreauth.Selector {
 	var selector coreauth.Selector
 	switch state.strategy {
 	case "weighted-round-robin":
@@ -118,6 +134,8 @@ func newRoutingSelectorWithExisting(state routingRuntimeState, existing coreauth
 		}
 	case "fill-first":
 		selector = &coreauth.FillFirstSelector{}
+	case "pace":
+		selector = coreauth.NewPaceSelector(state.pace, quotaView)
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}
@@ -163,6 +181,13 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 	if errValidate := newCfg.ValidateCredentialWeights(); errValidate != nil {
 		log.WithError(errValidate).Warn("rejected config update with invalid credential weights")
 		return configCommit{}
+	}
+	if errValidate := newCfg.Routing.Pace.Validate(); errValidate != nil {
+		log.WithError(errValidate).Warn("rejected config update with invalid pace routing settings")
+		return configCommit{}
+	}
+	if warning := newCfg.Routing.Pace.Throttle.Warning(); warning != "" {
+		log.Warn(warning)
 	}
 
 	if errValidate := newCfg.Models.Validate(); errValidate != nil {
@@ -286,7 +311,7 @@ func (s *Service) applyManagerConfig(ctx context.Context, commit configCommit) b
 	}
 	routingState := normalizedRoutingRuntimeState(commit.cfg)
 	if s.appliedRoutingState == nil || *s.appliedRoutingState != routingState {
-		s.coreManager.SetSelector(newRoutingSelectorWithExisting(routingState, s.coreManager.Selector()))
+		s.coreManager.SetSelector(newRoutingSelectorWithExisting(routingState, s.quotaCache, s.coreManager.Selector()))
 		s.appliedRoutingState = &routingState
 	}
 	s.applyRetryConfig(commit.cfg)

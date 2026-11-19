@@ -102,6 +102,7 @@ type Config struct {
 
 	// UsageStore controls the persistent SQLite usage store.
 	UsageStore UsageStoreConfig `yaml:"usage-store" json:"usage-store"`
+
 	// QuotaProbe controls server-side reads of Claude and Codex account quota.
 	QuotaProbe QuotaProbeConfig `yaml:"quota-probe" json:"quota-probe"`
 

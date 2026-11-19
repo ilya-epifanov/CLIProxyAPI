@@ -175,7 +175,35 @@ access:
 
 # Routing strategy for selecting credentials when multiple match.
 routing:
-  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first
+  strategy: "round-robin" # round-robin (default), weighted-round-robin, fill-first, pace
+  # pace sends each new session to the Claude or Codex account furthest behind schedule on its
+  # weekly quota: remaining fraction / fraction of the week left, the lowest over the weekly
+  # windows of the model the account will serve (Claude adds the Fable 7-day window for Fable
+  # models). Accounts whose 5-hour window is below burst-reserve go after the others. Quota comes
+  # from response headers and, with observability.quota.enable, from server-side quota reads
+  # (needed for the Fable window). Use it with session-affinity, so sessions keep their prompt cache.
+  # pace:
+  #   burst-reserve: 0.2   # 5-hour remaining fraction below which an account goes last; 0 disables
+  #   pace-tolerance: 0.1  # new sessions pick at random among accounts within 10 % of the best pace
+  #   stale-after: 15m     # quota data older than this is marked stale in GET /routing/ranking
+  #   # throttle slows requests down only as much as keeps the pool from running dry, because
+  #   # when it does every client gets 429s at once. Every request, it plans the next week: the
+  #   # forecast demand (last hour, last day, last week) is spent from the accounts whose weekly
+  #   # window resets first, capped by each 5-hour window, with every reset refilling. Each
+  #   # account's windows are sized from the usage it spent since the window started (needs
+  #   # observability.usage.store across restarts). Requests are slowed to the speed that lasts
+  #   # the week; agent turns of t seconds wait t x (1 / speed - 1), capped at max-delay.
+  #   throttle:
+  #     max-delay: 0s      # 0 (default) turns it off. Keep it well under the 300 s that Claude Code,
+  #                        # Codex and pi wait for a response, and under Claude's 5-minute prompt cache;
+  #                        # 120s is a good value. 240s or more logs a warning.
+  #     margin: 0.15       # forecast demand x (1 + margin), for forecast and sizing error
+  #     reserve: 0.03      # share of one window the pool keeps unspent until it refills
+  #     guard-horizon: 12h # the guard: at the burn the quota reads show, what the usable accounts
+  #                        # hold must last until its window refills or this long; 0s disables
+  # With session-affinity, a bound session keeps its account while its prompt cache is warm. Once
+  # the cache is gone (the first turn changed, as after compaction, or a Claude session was idle
+  # longer than its prompt cache lives), the session moves unless its account is in the top band.
   # weighted-round-robin uses each credential's integer weight (default 1, maximum 1,000,000).
   # Non-positive weights exclude the credential while this strategy is active.
   # Sticky requests (including inherited and LCP bindings) also consume weighted credits
@@ -1373,12 +1401,6 @@ observability:
     enable: false
     addr: "127.0.0.1:8316"
 
-  # Prometheus metrics at /metrics (host:port). It exposes credential labels and emails,
-  # so keep it bound to localhost.
-  metrics:
-    enable: false
-    addr: "127.0.0.1:9464"
-
   # Server-side reads of Claude and Codex account quota for the management panel. The server
   # reads every enabled account on one schedule, one account at a time, and the panel shows the
   # latest result. enable is read at start; changing it requires a restart.
@@ -1388,6 +1410,12 @@ observability:
     refresh-interval: 15m
     # Shortest time between two reads of one account, including refreshes the panel requests.
     min-refresh-interval: 5m
+
+  # Prometheus metrics at /metrics (host:port). It exposes credential labels and emails,
+  # so keep it bound to localhost.
+  metrics:
+    enable: false
+    addr: "127.0.0.1:9464"
 
 # Standard dynamic library plugins are trusted in-process code. They are disabled by default.
 # Build Go examples with go build -buildmode=c-shared for the target GOOS/GOARCH.

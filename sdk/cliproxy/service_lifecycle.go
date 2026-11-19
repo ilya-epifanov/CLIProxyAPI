@@ -79,6 +79,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if errUsage := s.startUsageObservability(ctx); errUsage != nil {
 		return errUsage
 	}
+	if errOverrides := s.loadThrottleOverrides(); errOverrides != nil {
+		return errOverrides
+	}
 
 	if !homeEnabled {
 		if errEnsureAuthDir := s.ensureAuthDir(); errEnsureAuthDir != nil {
