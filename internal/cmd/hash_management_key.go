@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // maxManagementKeyInput bounds the stdin read; bcrypt itself rejects keys longer than 72 bytes.
@@ -37,9 +37,9 @@ func hashManagementKey(in io.Reader) (string, error) {
 	if key == "" {
 		return "", errors.New("empty key on stdin")
 	}
-	hash, err := config.HashSecret(key)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(key), bcrypt.DefaultCost)
 	if err != nil {
 		return "", fmt.Errorf("hash key: %w", err)
 	}
-	return hash, nil
+	return string(hashed), nil
 }

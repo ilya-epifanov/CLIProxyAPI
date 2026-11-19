@@ -114,8 +114,9 @@ func run() (exitStatus int) {
 	// For legacy --discover-json flag or JSON requests, keep stdout clean
 	isJSONDiscover := argvEnablesBoolFlag(os.Args[1:], "discover-json")
 	isDiscoverMode := isJSONDiscover || argvEnablesBoolFlag(os.Args[1:], "discover")
+	isHashMode := argvEnablesBoolFlag(os.Args[1:], "hash-management-key")
 	// -hash-management-key prints only the hash, so scripts can capture stdout.
-	if !isJSONDiscover && !argvEnablesBoolFlag(os.Args[1:], "hash-management-key") {
+	if !isJSONDiscover && !isHashMode {
 		fmt.Printf("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 	}
 
@@ -211,7 +212,7 @@ func run() (exitStatus int) {
 	}
 
 	pluginHost := pluginhost.New()
-	if !isDiscoverMode {
+	if !isDiscoverMode && !isHashMode {
 		if bootstrapCfg := loadPluginBootstrapConfig(pluginBootstrapConfigPath(os.Args[1:], DefaultConfigPath)); bootstrapCfg != nil {
 			pluginHost.ApplyConfig(context.Background(), bootstrapCfg)
 			pluginHost.RegisterCommandLineFlags(context.Background(), flag.CommandLine)
@@ -222,7 +223,7 @@ func run() (exitStatus int) {
 	flag.Parse()
 
 	if hashManagementKey {
-		os.Exit(cmd.DoHashManagementKey(os.Stdin, os.Stdout, os.Stderr))
+		return cmd.DoHashManagementKey(os.Stdin, os.Stdout, os.Stderr)
 	}
 
 	if discoverGateways || discoverJSON {
