@@ -60,6 +60,7 @@ type Handler struct {
 	pluginStoreHTTPClient   pluginstore.HTTPDoer
 	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 	pluginReleases          pluginReleaseCache
+	usageHistory            UsageHistory
 	authCache               managementAuthCache
 	siwcOAuthFactory        func(*config.Config, string) siwcOAuthService
 	siwcCommitMu            sync.Mutex

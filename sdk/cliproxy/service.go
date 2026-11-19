@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/homeplugins"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -84,6 +85,15 @@ type Service struct {
 
 	// pprofServer manages the optional pprof HTTP debug server.
 	pprofServer *pprofServer
+
+	// metricsServer serves Prometheus metrics; built by Run.
+	metricsServer *metricsServer
+
+	// usageStore persists usage records; nil when the store is disabled.
+	usageStore *usagestore.Store
+
+	// usageStorePath is the database file usageStore was opened with.
+	usageStorePath string
 
 	// discoveryManager manages local network mDNS / DNS-SD service advertising.
 	discoveryManager *discoveryAdvertiserManager
