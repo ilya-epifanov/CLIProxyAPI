@@ -1,7 +1,9 @@
 package management
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,11 +38,7 @@ var nonConfigMutations = map[string]struct{}{
 
 // NonConfigMutationRoutes returns the routes exempt from ConfigWriteGuard as "METHOD /full/path" strings.
 func NonConfigMutationRoutes() []string {
-	routes := make([]string, 0, len(nonConfigMutations))
-	for route := range nonConfigMutations {
-		routes = append(routes, route)
-	}
-	return routes
+	return slices.Collect(maps.Keys(nonConfigMutations))
 }
 
 // ConfigWritable reports whether the server can write its config file.

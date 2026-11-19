@@ -5,16 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
 	proxyconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 const configGuardTestKey = "test-management-key"
@@ -25,19 +21,16 @@ func newConfigGuardTestServer(t *testing.T, mode os.FileMode) (*Server, string) 
 	if mode&0o200 == 0 && os.Geteuid() == 0 {
 		t.Skip("root can write files regardless of mode bits")
 	}
+	// NewServer reads MANAGEMENT_PASSWORD while it builds the server.
 	t.Setenv("MANAGEMENT_PASSWORD", configGuardTestKey)
-	gin.SetMode(gin.TestMode)
-
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	if errWrite := os.WriteFile(configPath, []byte("config-version: 8\n"), 0o600); errWrite != nil {
+	server := newTestServerWithConfig(t, &proxyconfig.Config{})
+	if errWrite := os.WriteFile(server.configFilePath, []byte("config-version: 8\n"), 0o600); errWrite != nil {
 		t.Fatalf("write config: %v", errWrite)
 	}
-	if errChmod := os.Chmod(configPath, mode); errChmod != nil {
+	if errChmod := os.Chmod(server.configFilePath, mode); errChmod != nil {
 		t.Fatalf("chmod config: %v", errChmod)
 	}
-	cfg := &proxyconfig.Config{AuthDir: filepath.Join(tmpDir, "auth")}
-	return NewServer(cfg, auth.NewManager(nil, nil, nil), sdkaccess.NewManager(), configPath), configPath
+	return server, server.configFilePath
 }
 
 func serveManagement(server *Server, method, path, body string, authenticated bool) *httptest.ResponseRecorder {
