@@ -16,6 +16,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 )
 
@@ -293,6 +294,8 @@ func (b *Builder) Build() (*Service, error) {
 	}
 	accessManager.SetProviders(sdkaccess.RegisteredProviders())
 
+	// The quota cache is filled by the prober and outlives config reloads.
+	quotaCache := quota.NewCache()
 	coreManager := b.coreManager
 	cooldownStateStore := b.cooldownStateStore
 	var appliedRoutingState *routingRuntimeState
@@ -338,6 +341,7 @@ func (b *Builder) Build() (*Service, error) {
 		pluginHost:            pluginHost,
 		discoveryManager:      newDiscoveryAdvertiserManager(),
 		appliedRoutingState:   appliedRoutingState,
+		quotaCache:            quotaCache,
 		serverOptions:         append([]api.ServerOption(nil), b.serverOptions...),
 	}
 	service.proxyPoolPublisher = helps.RegisterProxyPoolPublisher()

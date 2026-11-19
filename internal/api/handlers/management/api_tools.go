@@ -841,7 +841,12 @@ func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string) 
 		}
 		return directAPICallTransport()
 	}
+	return proxyCandidatesTransport(h.apiCallProxyCandidates(auth))
+}
 
+// apiCallProxyCandidates lists the proxies an API call for auth may use, in order of
+// preference.
+func (h *Handler) apiCallProxyCandidates(auth *coreauth.Auth) []string {
 	var proxyCandidates []string
 	if auth != nil {
 		if proxyStr := strings.TrimSpace(auth.ProxyURL); proxyStr != "" {
@@ -858,7 +863,11 @@ func (h *Handler) apiCallTransport(auth *coreauth.Auth, requestProxyURL string) 
 			proxyCandidates = append(proxyCandidates, proxyStr)
 		}
 	}
+	return proxyCandidates
+}
 
+// proxyCandidatesTransport uses the first candidate proxy that builds, or no proxy.
+func proxyCandidatesTransport(proxyCandidates []string) http.RoundTripper {
 	for _, proxyStr := range proxyCandidates {
 		if transport := buildProxyTransport(proxyStr); transport != nil {
 			return transport

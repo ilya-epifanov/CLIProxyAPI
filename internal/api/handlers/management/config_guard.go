@@ -34,6 +34,8 @@ var nonConfigMutations = map[string]struct{}{
 	"DELETE /v8/management/oauth/session":     {},
 	"POST /v8/management/plugins/:id/quota":   {},
 	"DELETE /v8/management/plugins/:id/quota": {},
+	// Quota probe refresh probes the provider for one account's quota now; it does not write the config.
+	"POST /v8/management/quota/probes/refresh": {},
 }
 
 // NonConfigMutationRoutes returns the routes exempt from ConfigWriteGuard as "METHOD /full/path" strings.
@@ -89,5 +91,6 @@ func (h *Handler) GetServerCapabilities(c *gin.Context) {
 		"config_writable": h.ConfigWritable(),
 		"strategies":      routingStrategies,
 		"usage_store":     h.usageStoreCapability(),
+		"quota_cache":     h.currentQuotaProbes() != nil,
 	})
 }

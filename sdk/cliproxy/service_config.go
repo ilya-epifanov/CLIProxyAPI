@@ -221,6 +221,7 @@ func (s *Service) applyConfigRuntime(ctx context.Context, commit configCommit, s
 		return false
 	}
 	s.applyUsageStoreConfig(cfg)
+	s.warnQuotaProbeRestart(cfg)
 	s.applyDiscoveryConfigContext(ctx, cfg)
 	if s.kvStoreManaged.Load() {
 		s.applyKVStoreConfig(cfg)
