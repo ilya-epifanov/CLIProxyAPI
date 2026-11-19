@@ -1293,6 +1293,7 @@ func (a *executorAdapter) Refresh(ctx context.Context, auth *coreauth.Auth) (ref
 	preserveAuthOAuthProviderMetadata(&data, auth, explicitPortalHint)
 	preserveFileAuthPriority(&data, auth)
 	preserveAuthDisabledState(&data, auth)
+	preserveAuthSignedInAt(&data, auth)
 	if len(data.StorageJSON) == 0 {
 		data.StorageJSON = storageJSONFromAuth(auth)
 	}

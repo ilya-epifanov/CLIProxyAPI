@@ -5077,6 +5077,45 @@ func TestExecutorAdapterRefresh_PreservesDisabledState_Issue7225(t *testing.T) {
 	}
 }
 
+func TestExecutorAdapterRefreshPreservesSignedInAt(t *testing.T) {
+	authProvider := fakeAuthProvider{
+		identifier: "plugin-provider",
+		refreshAuth: func(ctx context.Context, req pluginapi.AuthRefreshRequest) (pluginapi.AuthRefreshResponse, error) {
+			return pluginapi.AuthRefreshResponse{Auth: pluginapi.AuthData{
+				Metadata: map[string]any{"token": "new"},
+			}}, nil
+		},
+	}
+	executorRecord := normalizeTestCapabilityRecord(capabilityRecord{id: "executor-plugin"})
+	host := newHostWithRecords(
+		capabilityRecord{
+			id:     "auth-plugin",
+			plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{AuthProvider: authProvider}},
+		},
+		executorRecord,
+	)
+	adapter := newExecutorAdapterForRecordForTest(host, executorRecord, &fakeExecutor{identifier: "ignored-by-adapter"},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+		[]sdktranslator.Format{sdktranslator.FormatOpenAI},
+	)
+	auth := &coreauth.Auth{
+		ID:       "auth-1",
+		Provider: "plugin-provider",
+		Metadata: map[string]any{"token": "old", coreauth.MetadataKeySignedInAt: "2026-10-01T00:00:00Z"},
+	}
+
+	refreshed, errRefresh := adapter.Refresh(context.Background(), auth)
+	if errRefresh != nil || refreshed == nil {
+		t.Fatalf("Refresh() = %#v, %v", refreshed, errRefresh)
+	}
+	if got := refreshed.Metadata[coreauth.MetadataKeySignedInAt]; got != "2026-10-01T00:00:00Z" {
+		t.Fatalf("Refresh() signed_in_at = %v, want the original sign-in time", got)
+	}
+	if got := refreshed.Metadata["token"]; got != "new" {
+		t.Fatalf("Refresh() token = %q, want new", got)
+	}
+}
+
 func TestUsageAdapterPropagatesRequestIDTraceIDAndSelectionID(t *testing.T) {
 	var captured pluginapi.UsageRecord
 	record := normalizeTestCapabilityRecord(capabilityRecord{

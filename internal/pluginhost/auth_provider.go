@@ -1088,6 +1088,7 @@ func (h *Host) RefreshAuth(ctx context.Context, auth *coreauth.Auth) (refreshed 
 	preserveAuthOAuthProviderMetadata(&data, auth, explicitPortalHint)
 	preserveFileAuthPriority(&data, auth)
 	preserveAuthDisabledState(&data, auth)
+	preserveAuthSignedInAt(&data, auth)
 	if len(data.StorageJSON) == 0 {
 		data.StorageJSON = storageJSONFromAuth(auth)
 	}
@@ -1155,6 +1156,22 @@ func preserveAuthDisabledState(data *pluginapi.AuthData, auth *coreauth.Auth) {
 	if auth.Disabled || auth.Status == coreauth.StatusDisabled {
 		data.Disabled = true
 	}
+}
+
+// preserveAuthSignedInAt keeps the host-recorded sign-in time across a plugin refresh,
+// which renews tokens but is not a new sign-in.
+func preserveAuthSignedInAt(data *pluginapi.AuthData, auth *coreauth.Auth) {
+	if data == nil || auth == nil {
+		return
+	}
+	signedInAt, ok := auth.Metadata[coreauth.MetadataKeySignedInAt]
+	if !ok {
+		return
+	}
+	if data.Metadata == nil {
+		data.Metadata = make(map[string]any)
+	}
+	data.Metadata[coreauth.MetadataKeySignedInAt] = signedInAt
 }
 
 func preserveFileAuthPriority(data *pluginapi.AuthData, auth *coreauth.Auth) {
