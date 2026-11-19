@@ -465,6 +465,37 @@ func TestRefreshAuthAllowsPluginPriorityWithoutFilePriority(t *testing.T) {
 	}
 }
 
+func TestRefreshAuthPreservesSignedInAtWhenPluginOmitsIt(t *testing.T) {
+	host := newHostWithRecords(capabilityRecord{
+		id: "auth-plugin",
+		plugin: pluginapi.Plugin{Capabilities: pluginapi.Capabilities{
+			AuthProvider: fakeAuthProvider{
+				identifier: "plugin-provider",
+				refreshAuth: func(context.Context, pluginapi.AuthRefreshRequest) (pluginapi.AuthRefreshResponse, error) {
+					return pluginapi.AuthRefreshResponse{Auth: pluginapi.AuthData{
+						Metadata: map[string]any{"access_token": "new-token"},
+					}}, nil
+				},
+			},
+		}},
+	})
+	auth := &coreauth.Auth{
+		ID:       "auth-1",
+		Provider: "plugin-provider",
+		Metadata: map[string]any{"access_token": "old-token", coreauth.MetadataKeySignedInAt: "2026-10-01T00:00:00Z"},
+	}
+	refreshed, handled, errRefresh := host.RefreshAuth(context.Background(), auth)
+	if errRefresh != nil || !handled || refreshed == nil {
+		t.Fatalf("RefreshAuth() auth = %#v, handled = %t, error = %v", refreshed, handled, errRefresh)
+	}
+	if got := refreshed.Metadata[coreauth.MetadataKeySignedInAt]; got != "2026-10-01T00:00:00Z" {
+		t.Fatalf("RefreshAuth() signed_in_at = %v, want the original sign-in time", got)
+	}
+	if got := refreshed.Metadata["access_token"]; got != "new-token" {
+		t.Fatalf("RefreshAuth() access_token = %q, want new-token", got)
+	}
+}
+
 func TestRefreshAuthPreservesDisabledStateWhenPluginOmitsFlag_Issue7225(t *testing.T) {
 	host := newHostWithRecords(capabilityRecord{
 		id: "auth-plugin",
