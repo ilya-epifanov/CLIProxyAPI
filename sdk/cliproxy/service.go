@@ -13,7 +13,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/homeplugins"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagemetrics"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/usagestore"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/wsrelay"
@@ -89,9 +88,6 @@ type Service struct {
 
 	// metricsServer serves Prometheus metrics; built by Run.
 	metricsServer *metricsServer
-
-	// usageMetrics counts usage records for metricsServer.
-	usageMetrics *usagemetrics.Aggregator
 
 	// usageStore persists usage records; nil when the store is disabled.
 	usageStore *usagestore.Store

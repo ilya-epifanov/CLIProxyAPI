@@ -14,7 +14,7 @@ type pprofServer struct {
 }
 
 func newPprofServer() *pprofServer {
-	return &pprofServer{newLoopbackServer("pprof", func() http.Handler { return newPprofMux() })}
+	return &pprofServer{newLoopbackServer("pprof", newPprofMux())}
 }
 
 func (s *Service) applyPprofConfig(cfg *config.Config) {

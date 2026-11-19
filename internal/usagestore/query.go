@@ -3,11 +3,12 @@ package usagestore
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 	// Embedded zone data, so day buckets work on hosts without a zoneinfo database.
 	_ "time/tzdata"
+
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
 const (
@@ -36,12 +37,8 @@ type Counts struct {
 func (c *Counts) add(other Counts) {
 	c.Requests += other.Requests
 	c.Failed += other.Failed
-	c.Input += other.Input
-	c.CacheRead += other.CacheRead
-	c.CacheWrite += other.CacheWrite
-	c.Output += other.Output
-	c.Reasoning += other.Reasoning
-	c.Unclassified += other.Unclassified
+	// Tokens and TokenBuckets have the same fields, so they convert.
+	c.Tokens = Tokens(coreusage.TokenBuckets(c.Tokens).Add(coreusage.TokenBuckets(other.Tokens)))
 }
 
 // Dimension is a column that usage can be grouped by.
@@ -200,14 +197,17 @@ func (s *Store) Series(ctx context.Context, q SeriesQuery) ([]Series, error) {
 	column := q.GroupBy.String()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT hour_ms, `+column+`, `+sumColumns+` FROM usage_hourly
-		WHERE hour_ms >= ? AND hour_ms < ? GROUP BY hour_ms, `+column,
+		WHERE hour_ms >= ? AND hour_ms < ? GROUP BY hour_ms, `+column+`
+		ORDER BY `+column+`, hour_ms`,
 		q.Range.From.UnixMilli(), q.Range.To.UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("usage store: query series: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	buckets := map[string]map[int64]*Counts{}
+	// Rows arrive ordered by key, then hour, and bucketStart never decreases
+	// with the hour, so each row extends the last series and its last point.
+	series := []Series{}
 	for rows.Next() {
 		var hourMs int64
 		var key string
@@ -216,30 +216,19 @@ func (s *Store) Series(ctx context.Context, q SeriesQuery) ([]Series, error) {
 			return nil, fmt.Errorf("usage store: read series: %w", err)
 		}
 		start := bucketStart(time.UnixMilli(hourMs), q.Bucket, q.Location).UnixMilli()
-		points := buckets[key]
-		if points == nil {
-			points = map[int64]*Counts{}
-			buckets[key] = points
+		if len(series) == 0 || series[len(series)-1].Key != key {
+			series = append(series, Series{Key: key})
 		}
-		if points[start] == nil {
-			points[start] = &Counts{}
+		s := &series[len(series)-1]
+		if n := len(s.Points); n > 0 && s.Points[n-1].T.UnixMilli() == start {
+			s.Points[n-1].add(counts)
+		} else {
+			s.Points = append(s.Points, Point{T: time.UnixMilli(start).UTC(), Counts: counts})
 		}
-		points[start].add(counts)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("usage store: read series: %w", err)
 	}
-
-	series := make([]Series, 0, len(buckets))
-	for key, points := range buckets {
-		out := Series{Key: key, Points: make([]Point, 0, len(points))}
-		for startMs, counts := range points {
-			out.Points = append(out.Points, Point{T: time.UnixMilli(startMs).UTC(), Counts: *counts})
-		}
-		sort.Slice(out.Points, func(i, j int) bool { return out.Points[i].T.Before(out.Points[j].T) })
-		series = append(series, out)
-	}
-	sort.Slice(series, func(i, j int) bool { return series[i].Key < series[j].Key })
 	return series, nil
 }
 

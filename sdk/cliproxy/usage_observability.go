@@ -22,8 +22,8 @@ const (
 // store when it is enabled, and builds the metrics server. An enabled store
 // that cannot be opened is a configuration error, so the service does not start.
 func (s *Service) startUsageObservability(ctx context.Context) error {
-	s.usageMetrics = usagemetrics.NewAggregator()
-	usage.RegisterNamedPlugin(usageMetricsPluginName, s.usageMetrics)
+	aggregator := usagemetrics.NewAggregator()
+	usage.RegisterNamedPlugin(usageMetricsPluginName, aggregator)
 
 	// A nil *usagestore.Store must not become a non-nil StoreStats.
 	var storeStats usagemetrics.StoreStats
@@ -44,7 +44,7 @@ func (s *Service) startUsageObservability(ctx context.Context) error {
 	if s.coreManager != nil {
 		auths = s.coreManager.List
 	}
-	s.metricsServer = newMetricsServer(usagemetrics.NewHandler(s.usageMetrics, auths, storeStats))
+	s.metricsServer = newMetricsServer(usagemetrics.NewHandler(aggregator, auths, storeStats))
 	return nil
 }
 

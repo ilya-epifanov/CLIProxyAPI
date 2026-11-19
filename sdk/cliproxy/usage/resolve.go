@@ -105,6 +105,18 @@ type TokenBuckets struct {
 	Unclassified int64
 }
 
+// Add returns the bucket-wise sum of b and o.
+func (b TokenBuckets) Add(o TokenBuckets) TokenBuckets {
+	return TokenBuckets{
+		Input:        b.Input + o.Input,
+		CacheRead:    b.CacheRead + o.CacheRead,
+		CacheWrite:   b.CacheWrite + o.CacheWrite,
+		Output:       b.Output + o.Output,
+		Reasoning:    b.Reasoning + o.Reasoning,
+		Unclassified: b.Unclassified + o.Unclassified,
+	}
+}
+
 // Buckets splits b into its disjoint token buckets.
 func (b TokenBreakdown) Buckets() TokenBuckets {
 	return TokenBuckets{

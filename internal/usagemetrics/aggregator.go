@@ -10,21 +10,6 @@ import (
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
-// tokenType is one canonical, non-overlapping token bucket.
-type tokenType int
-
-const (
-	tokenInput tokenType = iota
-	tokenCacheRead
-	tokenCacheWrite
-	tokenOutput
-	tokenReasoning
-	tokenUnclassified
-	tokenTypeCount
-)
-
-var tokenTypeLabels = [tokenTypeCount]string{"input", "cache_read", "cache_write", "output", "reasoning", "unclassified"}
-
 type seriesKey struct {
 	provider  string
 	authIndex string
@@ -33,7 +18,7 @@ type seriesKey struct {
 
 type counters struct {
 	requestsByCode map[int]uint64
-	tokens         [tokenTypeCount]uint64
+	tokens         coreusage.TokenBuckets
 }
 
 // Aggregator is a usage.Plugin that keeps counters since process start.
@@ -50,15 +35,6 @@ func NewAggregator() *Aggregator {
 // HandleUsage implements usage.Plugin.
 func (a *Aggregator) HandleUsage(ctx context.Context, record coreusage.Record) {
 	resolved := coreusage.Resolve(ctx, record)
-	buckets := resolved.Detail.TokenBreakdown.Buckets()
-	tokens := [tokenTypeCount]int64{
-		tokenInput:        buckets.Input,
-		tokenCacheRead:    buckets.CacheRead,
-		tokenCacheWrite:   buckets.CacheWrite,
-		tokenOutput:       buckets.Output,
-		tokenReasoning:    buckets.Reasoning,
-		tokenUnclassified: buckets.Unclassified,
-	}
 	key := seriesKey{
 		provider:  resolved.Provider,
 		authIndex: strings.TrimSpace(resolved.AuthIndex),
@@ -73,18 +49,14 @@ func (a *Aggregator) HandleUsage(ctx context.Context, record coreusage.Record) {
 		a.series[key] = c
 	}
 	c.requestsByCode[resolved.Fail.StatusCode]++
-	for i, n := range tokens {
-		// A valid breakdown has no negative buckets (TokenBreakdown.Valid).
-		if n > 0 {
-			c.tokens[i] += uint64(n)
-		}
-	}
+	// Resolve returns a valid breakdown, which has no negative buckets (TokenBreakdown.Valid).
+	c.tokens = c.tokens.Add(resolved.Detail.TokenBreakdown.Buckets())
 }
 
 type seriesSnapshot struct {
 	key            seriesKey
 	requestsByCode map[int]uint64
-	tokens         [tokenTypeCount]uint64
+	tokens         coreusage.TokenBuckets
 }
 
 // snapshot copies the counters.

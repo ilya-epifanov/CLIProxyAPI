@@ -15,8 +15,8 @@ import (
 // ApplyContext takes ownership through owner, so a stale apply never stops
 // the server a newer one started.
 type loopbackServer struct {
-	name       string
-	newHandler func() http.Handler
+	name    string
+	handler http.Handler
 
 	mu      sync.Mutex
 	server  *http.Server
@@ -25,8 +25,8 @@ type loopbackServer struct {
 	owner   uint64
 }
 
-func newLoopbackServer(name string, newHandler func() http.Handler) *loopbackServer {
-	return &loopbackServer{name: name, newHandler: newHandler}
+func newLoopbackServer(name string, handler http.Handler) *loopbackServer {
+	return &loopbackServer{name: name, handler: handler}
 }
 
 // ApplyContext starts, restarts or stops the listener so that it matches
@@ -108,7 +108,7 @@ func (p *loopbackServer) Shutdown(ctx context.Context) error {
 func (p *loopbackServer) startServer(addr string, owner uint64) *http.Server {
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           p.newHandler(),
+		Handler:           p.handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

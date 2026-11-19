@@ -16,7 +16,7 @@ type metricsServer struct {
 func newMetricsServer(handler http.Handler) *metricsServer {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", handler)
-	return &metricsServer{newLoopbackServer("metrics", func() http.Handler { return mux })}
+	return &metricsServer{newLoopbackServer("metrics", mux)}
 }
 
 func (m *metricsServer) ApplyContext(ctx context.Context, cfg *config.Config) bool {

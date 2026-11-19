@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
 )
 
 // AuthLister returns the current credentials, e.g. coreauth.Manager.List.
@@ -35,6 +36,19 @@ var (
 	writeErrorsDesc = prometheus.NewDesc("cliproxyapi_usage_store_write_errors_total",
 		"Usage records lost because a store write failed.", nil, nil)
 )
+
+// tokenTypes labels each disjoint token bucket for tokensDesc.
+var tokenTypes = []struct {
+	label string
+	get   func(coreusage.TokenBuckets) int64
+}{
+	{"input", func(b coreusage.TokenBuckets) int64 { return b.Input }},
+	{"cache_read", func(b coreusage.TokenBuckets) int64 { return b.CacheRead }},
+	{"cache_write", func(b coreusage.TokenBuckets) int64 { return b.CacheWrite }},
+	{"output", func(b coreusage.TokenBuckets) int64 { return b.Output }},
+	{"reasoning", func(b coreusage.TokenBuckets) int64 { return b.Reasoning }},
+	{"unclassified", func(b coreusage.TokenBuckets) int64 { return b.Unclassified }},
+}
 
 type collector struct {
 	aggregator *Aggregator
@@ -70,9 +84,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			ch <- prometheus.MustNewConstMetric(requestsDesc, prometheus.CounterValue, float64(n),
 				s.key.provider, s.key.authIndex, s.key.model, strconv.Itoa(code))
 		}
-		for i, n := range s.tokens {
-			ch <- prometheus.MustNewConstMetric(tokensDesc, prometheus.CounterValue, float64(n),
-				s.key.provider, s.key.authIndex, s.key.model, tokenTypeLabels[i])
+		for _, t := range tokenTypes {
+			ch <- prometheus.MustNewConstMetric(tokensDesc, prometheus.CounterValue, float64(t.get(s.tokens)),
+				s.key.provider, s.key.authIndex, s.key.model, t.label)
 		}
 	}
 	if c.auths != nil {
