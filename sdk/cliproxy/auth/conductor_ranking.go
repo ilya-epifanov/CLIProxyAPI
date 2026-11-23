@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -48,11 +49,11 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	candidates, notCandidates, selectionModels := m.rankingCandidatesLocked(provider, model, now)
 	out.NotCandidates = notCandidates
 	pace, pools, paced := m.observeRunwayLocked([]string{provider}, model, now)
-	drain := paced && m.drainServesLocked(pace, []string{provider}, model, now)
+	draining := m.drainingLocked(candidates, model, now)
 	m.mu.RUnlock()
 
 	if paced {
-		runway := m.planRunway(pace, []string{provider}, pools, drain, now)
+		runway := m.planRunway(pace, []string{provider}, pools, len(draining) > 0, now)
 		out.Runway = &runway
 	}
 	if _, ok := paceSelectorOf(selector); !ok {
@@ -62,13 +63,20 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 
 	sort.Slice(out.NotCandidates, func(i, j int) bool { return out.NotCandidates[i].Auth.ID < out.NotCandidates[j].Auth.ID })
 	ctx = withSelectionModels(ctx, selectionModels)
-	ctx = withDrainFlags(ctx, m.drains)
+	ctx = withDraining(ctx, draining)
 	ranker, ranked := behindAffinity(selector).(Ranker)
 	out.Ranked = ranked
 
+	// Draining accounts form a tier above every configured one, as in a pick.
+	tierOf := func(auth *Auth) int {
+		if _, ok := draining[auth.ID]; ok {
+			return math.MaxInt
+		}
+		return authPriority(auth)
+	}
 	byTier := map[int][]*Auth{}
 	for _, auth := range candidates {
-		byTier[authPriority(auth)] = append(byTier[authPriority(auth)], auth)
+		byTier[tierOf(auth)] = append(byTier[tierOf(auth)], auth)
 	}
 	tiers := make([]int, 0, len(byTier))
 	for priority := range byTier {
@@ -81,12 +89,11 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 		if ranked {
 			entries = ranker.Rank(ctx, tier, model, now)
 		} else {
-			entries = unrankedEntries(tier, m.drains)
+			entries = unrankedEntries(tier)
 		}
-		if i > 0 {
-			for j := range entries {
-				entries[j].TopBand = false
-			}
+		for j := range entries {
+			entries[j].TopBand = entries[j].TopBand && i == 0
+			entries[j].Drain = m.drains.Has(entries[j].Auth.ID)
 		}
 		out.Entries = append(out.Entries, entries...)
 	}
@@ -172,14 +179,12 @@ func notCandidateReason(auth *Auth, reason blockReason) string {
 	}
 }
 
-func unrankedEntries(auths []*Auth, drains *DrainFlags) []Ranked {
+func unrankedEntries(auths []*Auth) []Ranked {
 	sorted := append([]*Auth(nil), auths...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	out := make([]Ranked, 0, len(sorted))
 	for _, auth := range sorted {
-		entry := unknownRanked(auth)
-		entry.Drain = drains.Has(auth.ID)
-		out = append(out, entry)
+		out = append(out, unknownRanked(auth))
 	}
 	return out
 }

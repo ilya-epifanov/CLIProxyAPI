@@ -18,10 +18,10 @@ import (
 )
 
 // Drain: the operator flags accounts whose quota should be used up before a reset they
-// plan to spend. While a flagged account can serve a request, the pace selector picks
-// among the flagged accounts only, the one closest to its limit first, and the pace
-// throttle adds no delay. A flag clears itself once an observation shows the account's
-// longest window used up.
+// plan to spend. Under pace, while a flagged account can serve a request, the pick
+// considers the flagged accounts only, whatever their priority, the one closest to its
+// limit first, and the pace throttle adds no delay. A flag clears itself once an
+// observation shows the account's longest window used up.
 
 // DrainFlag marks one account for draining.
 type DrainFlag struct {
@@ -39,16 +39,9 @@ const drainFlagsVersion = 1
 // DrainFlags holds the drain flags by auth ID. With a path, every change is written
 // there and the flags survive a restart. A nil *DrainFlags has no flags.
 type DrainFlags struct {
-	// mu guards flags, which is replaced on change and never mutated, so a reader may
-	// keep it after releasing mu.
 	mu    sync.RWMutex
+	path  string
 	flags map[string]DrainFlag
-	// writeMu orders the writes to path; each writes the flags current when it runs,
-	// so the last write holds the latest flags.
-	writeMu sync.Mutex
-	path    string
-	// writes counts the writes of auto-clears still running.
-	writes sync.WaitGroup
 }
 
 // NewDrainFlags returns flags kept in memory only.
@@ -98,71 +91,28 @@ func (d *DrainFlags) empty() bool {
 	return len(d.flags) == 0
 }
 
-func (d *DrainFlags) current() map[string]DrainFlag {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.flags
-}
-
 // Set flags authID for draining, or clears its flag. The flags are stored before they
 // take effect, so a failed write changes nothing.
 func (d *DrainFlags) Set(authID string, drain bool, now time.Time) error {
-	d.writeMu.Lock()
-	defer d.writeMu.Unlock()
-	next, changed := withDrain(d.current(), authID, drain, now)
-	if !changed {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, flagged := d.flags[authID]; flagged == drain {
 		return nil
 	}
-	if err := d.storeLocked(next); err != nil {
-		return err
-	}
-	d.mu.Lock()
-	// An auto-clear may have run since current(); apply this change to what it left.
-	d.flags, _ = withDrain(d.flags, authID, drain, now)
-	d.mu.Unlock()
-	return nil
-}
-
-// clearSpent clears authID's flag at once and stores the flags in the background, so
-// the request that observed the spent window does not wait for the disk. It reports
-// whether the flag was set.
-func (d *DrainFlags) clearSpent(authID string) bool {
-	d.mu.Lock()
-	next, changed := withDrain(d.flags, authID, false, time.Time{})
-	d.flags = next
-	d.mu.Unlock()
-	if !changed {
-		return false
-	}
-	d.writes.Add(1)
-	go func() {
-		defer d.writes.Done()
-		d.writeMu.Lock()
-		defer d.writeMu.Unlock()
-		if err := d.storeLocked(d.current()); err != nil {
-			log.WithError(err).Error("drain: store flags")
-		}
-	}()
-	return true
-}
-
-// withDrain returns flags with authID's flag set or cleared, and whether that changed
-// anything. A flag set again keeps its SetAt.
-func withDrain(flags map[string]DrainFlag, authID string, drain bool, now time.Time) (map[string]DrainFlag, bool) {
-	if _, flagged := flags[authID]; flagged == drain {
-		return flags, false
-	}
-	next := maps.Clone(flags)
+	next := maps.Clone(d.flags)
 	if drain {
 		next[authID] = DrainFlag{SetAt: now.UTC()}
 	} else {
 		delete(next, authID)
 	}
-	return next, true
+	if err := d.storeLocked(next); err != nil {
+		return err
+	}
+	d.flags = next
+	return nil
 }
 
 // storeLocked replaces the file with flags, so a crash leaves the old or the new one.
-// The caller holds writeMu.
 func (d *DrainFlags) storeLocked(flags map[string]DrainFlag) error {
 	if d.path == "" {
 		return nil
@@ -221,59 +171,84 @@ func (m *Manager) ClearSpentDrain(authID string) {
 	if !observed || !longestSpent(windows, now) {
 		return
 	}
-	if m.drains.clearSpent(authID) {
-		log.WithField("auth_id", authID).Info("drain: the account's longest window is used up; cleared its drain flag")
+	if err := m.drains.Set(authID, false, now); err != nil {
+		log.WithError(err).Error("drain: store flags")
+		return
 	}
+	log.WithField("auth_id", authID).Info("drain: the account's longest window is used up; cleared its drain flag")
+}
+
+// drainingLocked returns the IDs among auths that are flagged with no routing window
+// used up; nil unless the strategy is pace. The caller holds m.mu.
+func (m *Manager) drainingLocked(auths []*Auth, routeModel string, now time.Time) map[string]struct{} {
+	pace, ok := paceSelectorOf(m.selector)
+	if !ok || m.drains.empty() {
+		return nil
+	}
+	var out map[string]struct{}
+	for _, auth := range auths {
+		if m.drains.Has(auth.ID) && pace.classify(auth, m.selectionModelForAuth(auth, routeModel), true, now).draining {
+			if out == nil {
+				out = map[string]struct{}{}
+			}
+			out[auth.ID] = struct{}{}
+		}
+	}
+	return out
 }
 
 // drainServesLocked reports whether a flagged account can serve model for one of
-// providers: a candidate of the highest priority tier, which is the one a pick draws
-// from, with no routing window used up. The caller holds m.mu.
-func (m *Manager) drainServesLocked(pace *PaceSelector, providers []string, model string, now time.Time) bool {
+// providers, in any priority tier. The caller holds m.mu.
+func (m *Manager) drainServesLocked(providers []string, model string, now time.Time) bool {
 	if m.drains.empty() {
 		return false
 	}
-	var candidates []rankingAccount
+	var auths []*Auth
 	for _, provider := range providers {
 		for _, account := range m.rankingPoolLocked(provider, model, now) {
 			if !account.blocked {
-				candidates = append(candidates, account)
+				auths = append(auths, account.auth)
 			}
 		}
 	}
-	top := math.MinInt
-	for _, account := range candidates {
-		top = max(top, authPriority(account.auth))
-	}
-	for _, account := range candidates {
-		if authPriority(account.auth) == top && m.drains.Has(account.auth.ID) &&
-			pace.classify(account.auth, account.model, true, now).draining {
-			return true
-		}
-	}
-	return false
+	return len(m.drainingLocked(auths, model, now)) > 0
 }
 
-type drainFlagsKey struct{}
+type drainingKey struct{}
 
-// withDrainFlags attaches the drain flags the pace selector ranks by.
-func withDrainFlags(ctx context.Context, flags *DrainFlags) context.Context {
-	if flags == nil {
+// withDraining attaches the draining accounts (drainingLocked) of a pick or a ranking.
+func withDraining(ctx context.Context, ids map[string]struct{}) context.Context {
+	if len(ids) == 0 {
 		return ctx
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, drainFlagsKey{}, flags)
+	return context.WithValue(ctx, drainingKey{}, ids)
 }
 
-// drainFlagsFromContext returns the flags withDrainFlags attached; nil has none.
-func drainFlagsFromContext(ctx context.Context) *DrainFlags {
+func drainingFrom(ctx context.Context) map[string]struct{} {
 	if ctx == nil {
 		return nil
 	}
-	flags, _ := ctx.Value(drainFlagsKey{}).(*DrainFlags)
-	return flags
+	ids, _ := ctx.Value(drainingKey{}).(map[string]struct{})
+	return ids
+}
+
+// drainingOnly narrows auths to the draining ones when any is among them: drain is a
+// priority level above every configured one. It runs before the tier narrowing.
+func drainingOnly(ctx context.Context, auths []*Auth) []*Auth {
+	ids := drainingFrom(ctx)
+	var out []*Auth
+	for _, auth := range auths {
+		if _, ok := ids[auth.ID]; ok {
+			out = append(out, auth)
+		}
+	}
+	if len(out) == 0 {
+		return auths
+	}
+	return out
 }
 
 // longestWindows returns the windows of the greatest length among windows.

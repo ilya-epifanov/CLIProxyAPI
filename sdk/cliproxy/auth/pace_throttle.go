@@ -468,7 +468,7 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	now := time.Now()
 	m.mu.RLock()
 	pace, pools, ok := m.observeRunwayLocked(providers, model, now)
-	drain := ok && m.drainServesLocked(pace, providers, model, now)
+	drain := ok && m.drainServesLocked(providers, model, now)
 	m.mu.RUnlock()
 	if !ok {
 		return nil
