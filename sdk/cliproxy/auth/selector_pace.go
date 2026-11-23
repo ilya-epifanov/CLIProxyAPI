@@ -61,8 +61,10 @@ const minTimeLeft = time.Minute
 // PaceSelector picks the account that is furthest behind schedule on its long quota
 // windows: pace = remaining fraction / fraction of the window's time left, lowest over
 // the account's long windows. Accounts whose short window is below the burst reserve
-// rank after the others. Wrapped by SessionAffinitySelector, it places sessions, not
-// requests: bound sessions keep their account.
+// rank after the others. Accounts flagged for draining (DrainFlags) that can serve rank
+// before all of them, the one with the least left in its longest window first. Wrapped
+// by SessionAffinitySelector, it places sessions, not requests: bound sessions keep their
+// account.
 type PaceSelector struct {
 	cfg  PaceConfig
 	view quota.View
@@ -105,12 +107,19 @@ type Ranked struct {
 	// PaceConfig.StaleAfter.
 	ObservedAt time.Time
 	Stale      bool
+	// Drain: the operator flagged the account for draining.
+	Drain bool
+	// draining: Drain, and no window is used up, so the account ranks before the
+	// unflagged ones. drainLeft is the remaining fraction of its longest window; NaN
+	// without quota data.
+	draining  bool
+	drainLeft float64
 }
 
 // unknownRanked is auth's entry before any window is classified: ClassUnknown, with the
 // NaN pace and short-remaining values that mean "absent".
 func unknownRanked(auth *Auth) Ranked {
-	return Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN()}
+	return Ranked{Auth: auth, Priority: authPriority(auth), Class: ClassUnknown, Pace: math.NaN(), ShortRemaining: math.NaN(), drainLeft: math.NaN()}
 }
 
 // Ranker is implemented by selectors that can explain their order. ctx carries the
@@ -163,15 +172,31 @@ func (s *PaceSelector) Pick(ctx context.Context, provider, model string, opts cl
 	return ranked[s.intn(n)].Auth, nil
 }
 
-// Rank orders auths by class, then by pace (ready, burst low), by return time
-// (exhausted) or by ID (unknown), and marks the top band.
+// Rank puts the draining accounts first, those with quota data by what is left in their
+// longest window, then the others by class, then by pace (ready, burst low), by return
+// time (exhausted) or by ID (unknown), and marks the top band. ctx carries the drain
+// flags (withDrainFlags).
 func (s *PaceSelector) Rank(ctx context.Context, auths []*Auth, model string, now time.Time) []Ranked {
+	drains := drainFlagsFromContext(ctx)
 	out := make([]Ranked, 0, len(auths))
 	for _, auth := range auths {
-		out = append(out, s.classify(auth, selectionModelFromContext(ctx, auth, model), now))
+		out = append(out, s.classify(auth, selectionModelFromContext(ctx, auth, model), drains.Has(auth.ID), now))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		x, y := out[i], out[j]
+		if x.draining != y.draining {
+			return x.draining
+		}
+		if x.draining {
+			knownX, knownY := !math.IsNaN(x.drainLeft), !math.IsNaN(y.drainLeft)
+			if knownX != knownY {
+				return knownX
+			}
+			if knownX && x.drainLeft != y.drainLeft {
+				return x.drainLeft < y.drainLeft
+			}
+			return x.Auth.ID < y.Auth.ID
+		}
 		if x.Class != y.Class {
 			return x.Class < y.Class
 		}
@@ -192,9 +217,11 @@ func (s *PaceSelector) Rank(ctx context.Context, auths []*Auth, model string, no
 }
 
 // classify ranks one account against the windows of its selection model, which is the
-// model the account will serve after its alias, not the route model.
-func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time) Ranked {
+// model the account will serve after its alias, not the route model. flagged is the
+// account's drain flag.
+func (s *PaceSelector) classify(auth *Auth, selectionModel string, flagged bool, now time.Time) Ranked {
 	r := unknownRanked(auth)
+	r.Drain, r.draining = flagged, flagged
 	windows, ok := s.windowsOf(auth, selectionModel)
 	if !ok {
 		return r
@@ -206,6 +233,7 @@ func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time
 	for _, w := range windows.All() {
 		if exhausted(w, now) {
 			r.Class, r.ExhaustedWindow, r.BackAt = ClassExhausted, w.ID, w.ResetAt
+			r.draining = false
 			return r
 		}
 	}
@@ -232,6 +260,9 @@ func (s *PaceSelector) classify(auth *Auth, selectionModel string, now time.Time
 		}
 	}
 	r.Stale = s.cfg.StaleAfter > 0 && now.Sub(r.ObservedAt) > s.cfg.StaleAfter
+	if flagged {
+		r.drainLeft = longestLeft(windows, now)
+	}
 	return r
 }
 
@@ -270,6 +301,11 @@ func windowShare(w quota.Window, now time.Time) (remaining, timeLeft float64) {
 }
 
 func markTopBand(ranked []Ranked, tolerance float64) {
+	if len(ranked) > 0 && ranked[0].draining {
+		// Draining picks the account closest to its limit, not a random one.
+		ranked[0].TopBand = true
+		return
+	}
 	for i := range ranked {
 		if ranked[i].Class != ranked[0].Class {
 			return

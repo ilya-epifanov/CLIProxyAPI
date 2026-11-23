@@ -61,6 +61,8 @@ type freeMoveFixture struct {
 	selector *SessionAffinitySelector
 	cache    *quota.Cache
 	auths    []*Auth
+	// drains are the flags picks rank by; nil has none.
+	drains *DrainFlags
 }
 
 func newFreeMoveFixture(t *testing.T) *freeMoveFixture {
@@ -85,7 +87,7 @@ func (f *freeMoveFixture) pick(t *testing.T, firstTurn string) string {
 	headers := http.Header{}
 	headers.Set("X-Session-ID", "session-1")
 	body := `{"system":"You are helpful.","messages":[{"role":"user","content":"` + firstTurn + `"},{"role":"assistant","content":"ok"},{"role":"user","content":"next"}]}`
-	auth, err := f.selector.Pick(context.Background(), "claude", "claude-opus-5-5", cliproxyexecutor.Options{
+	auth, err := f.selector.Pick(withDrainFlags(context.Background(), f.drains), "claude", "claude-opus-5-5", cliproxyexecutor.Options{
 		Headers:         headers,
 		OriginalRequest: []byte(body),
 		SourceFormat:    sdktranslator.FormatClaude,

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/quota"
 )
 
 type fakeDoer struct {
@@ -290,5 +291,32 @@ func waitFor(t *testing.T, condition func() bool) {
 			t.Fatal("condition not reached")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+type drainRecorder struct {
+	cache *quota.Cache
+	// seen holds, per call, whether the cache already had the read.
+	seen map[string]bool
+}
+
+func (r *drainRecorder) ClearSpentDrain(authID string) {
+	_, cached := r.cache.Lookup(authID, "claude", nil, time.Time{})
+	r.seen[authID] = cached
+}
+
+func TestStoredReadIsReportedToDrains(t *testing.T) {
+	doer := &fakeDoer{responses: map[string]Response{
+		"usage": {StatusCode: http.StatusOK, Body: `{"five_hour": {"utilization": 10, "resets_at": null}, "seven_day": {"utilization": 100, "resets_at": "2026-10-18T09:00:00Z"}}`},
+	}}
+	auth := claudeAuth("a1")
+	auth.ID = "claude-a1"
+	p, _ := newTestProber(doer, auth)
+	cache := quota.NewCache()
+	drains := &drainRecorder{cache: cache, seen: map[string]bool{}}
+	p.cache, p.drains = cache, drains
+	drain(p)
+	if cached, called := drains.seen["claude-a1"]; !called || !cached {
+		t.Fatalf("drains called = %v with the read cached = %v; want both", called, cached)
 	}
 }

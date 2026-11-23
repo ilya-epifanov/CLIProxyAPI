@@ -48,10 +48,11 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 	candidates, notCandidates, selectionModels := m.rankingCandidatesLocked(provider, model, now)
 	out.NotCandidates = notCandidates
 	pace, pools, paced := m.observeRunwayLocked([]string{provider}, model, now)
+	drain := paced && m.drainServesLocked(pace, []string{provider}, model, now)
 	m.mu.RUnlock()
 
 	if paced {
-		runway := m.planRunway(pace, []string{provider}, pools, now)
+		runway := m.planRunway(pace, []string{provider}, pools, drain, now)
 		out.Runway = &runway
 	}
 	if _, ok := paceSelectorOf(selector); !ok {
@@ -61,6 +62,7 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 
 	sort.Slice(out.NotCandidates, func(i, j int) bool { return out.NotCandidates[i].Auth.ID < out.NotCandidates[j].Auth.ID })
 	ctx = withSelectionModels(ctx, selectionModels)
+	ctx = withDrainFlags(ctx, m.drains)
 	ranker, ranked := behindAffinity(selector).(Ranker)
 	out.Ranked = ranked
 
@@ -79,7 +81,7 @@ func (m *Manager) RankCandidates(ctx context.Context, provider, model string) Ra
 		if ranked {
 			entries = ranker.Rank(ctx, tier, model, now)
 		} else {
-			entries = unrankedEntries(tier)
+			entries = unrankedEntries(tier, m.drains)
 		}
 		if i > 0 {
 			for j := range entries {
@@ -170,12 +172,14 @@ func notCandidateReason(auth *Auth, reason blockReason) string {
 	}
 }
 
-func unrankedEntries(auths []*Auth) []Ranked {
+func unrankedEntries(auths []*Auth, drains *DrainFlags) []Ranked {
 	sorted := append([]*Auth(nil), auths...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	out := make([]Ranked, 0, len(sorted))
 	for _, auth := range sorted {
-		out = append(out, unknownRanked(auth))
+		entry := unknownRanked(auth)
+		entry.Drain = drains.Has(auth.ID)
+		out = append(out, entry)
 	}
 	return out
 }

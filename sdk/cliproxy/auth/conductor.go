@@ -203,6 +203,8 @@ type Manager struct {
 	throttleWait func(ctx context.Context, d time.Duration) error
 	// ledger counts upstream usage for the pace throttle's runway (UsageLedger).
 	ledger *UsageLedger
+	// drains are the accounts the operator flagged for draining (DrainFlags).
+	drains *DrainFlags
 	// throttleOverrides replace the pace throttle's computed speed per provider pool.
 	throttleOverrides *ThrottleOverrides
 	resultPolicy      atomic.Pointer[resultPolicyHolder]
@@ -303,6 +305,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		modelPoolOffsets:      make(map[string]int),
 		ledger:                NewUsageLedger(time.Now()),
 		throttleOverrides:     NewThrottleOverrides(),
+		drains:                NewDrainFlags(),
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})

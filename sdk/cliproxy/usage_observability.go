@@ -21,6 +21,8 @@ const (
 	usageStoreFileName     = "usage.db"
 	// throttleOverridesFileName holds the pace throttle's per-pool overrides.
 	throttleOverridesFileName = "throttle-overrides.json"
+	// drainFlagsFileName holds the accounts flagged for draining.
+	drainFlagsFileName = "drain-flags.json"
 	// paceLedgerSeedSpan is how much stored history the pace throttle's ledger reads at start.
 	paceLedgerSeedSpan = 7 * 24 * time.Hour
 )
@@ -100,6 +102,25 @@ func (s *Service) loadThrottleOverrides() error {
 		return err
 	}
 	s.coreManager.SetThrottleOverrides(overrides)
+	return nil
+}
+
+// loadDrainFlags installs the stored drain flags, so a restart keeps them. It runs
+// before the service serves requests. A file it cannot read stops the start, since
+// requests would go to accounts the operator did not choose.
+func (s *Service) loadDrainFlags() error {
+	if s.coreManager == nil {
+		return nil
+	}
+	path := drainFlagsFileName
+	if dir := util.WritablePath(); dir != "" {
+		path = filepath.Join(dir, drainFlagsFileName)
+	}
+	flags, err := coreauth.LoadDrainFlags(path)
+	if err != nil {
+		return err
+	}
+	s.coreManager.SetDrainFlags(flags)
 	return nil
 }
 

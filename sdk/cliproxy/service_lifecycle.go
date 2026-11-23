@@ -82,6 +82,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if errOverrides := s.loadThrottleOverrides(); errOverrides != nil {
 		return errOverrides
 	}
+	if errDrains := s.loadDrainFlags(); errDrains != nil {
+		return errDrains
+	}
 
 	if !homeEnabled {
 		if errEnsureAuthDir := s.ensureAuthDir(); errEnsureAuthDir != nil {

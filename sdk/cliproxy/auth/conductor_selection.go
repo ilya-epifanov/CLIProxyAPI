@@ -2450,6 +2450,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
 		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
+		selectorCtx = withDrainFlags(selectorCtx, m.drains)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}
@@ -2950,6 +2951,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
 		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
+		selectorCtx = withDrainFlags(selectorCtx, m.drains)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}

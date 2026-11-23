@@ -26,6 +26,7 @@ func (s *Service) startQuotaProbes(ctx context.Context) {
 		Spacing:         quotaprobe.DefaultSpacing,
 		Cache:           s.quotaCache,
 		Cooldowns:       s.coreManager,
+		Drains:          s.coreManager,
 	})
 	if s.quotaCache != nil {
 		s.quotaCache.SetRefreshRequester(prober.RequestRefresh)
