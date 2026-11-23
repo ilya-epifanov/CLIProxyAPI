@@ -98,6 +98,9 @@ func TestConfigWriteGuardRefusesConfigWritesWhenReadOnly(t *testing.T) {
 	if rr := serveManagement(server, http.MethodPut, "/v8/management/routing/throttle/overrides/claude", `{"speed":1}`, true); rr.Code == http.StatusConflict {
 		t.Errorf("throttle override refused: body=%s", rr.Body.String())
 	}
+	if rr := serveManagement(server, http.MethodPut, "/v8/management/routing/drain/missing", `{"drain":true}`, true); rr.Code == http.StatusConflict {
+		t.Errorf("drain flag refused: body=%s", rr.Body.String())
+	}
 	if rr := serveManagement(server, http.MethodGet, "/v8/management/config", "", true); rr.Code != http.StatusOK {
 		t.Errorf("read: status = %d body=%s", rr.Code, rr.Body.String())
 	}

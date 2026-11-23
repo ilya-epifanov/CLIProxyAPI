@@ -128,8 +128,10 @@ func (m *Manager) observeRunwayLocked(providers []string, model string, now time
 }
 
 // planRunway plans the runway of the pools observeRunwayLocked observed behind
-// providers, the tightest provider deciding. It needs no manager lock.
-func (m *Manager) planRunway(pace *PaceSelector, providers []string, pools [][]observedAccount, now time.Time) RunwayStatus {
+// providers, the tightest provider deciding. drain (drainServesLocked) runs requests at
+// full speed: the operator wants the flagged accounts spent before their reset. It needs
+// no manager lock.
+func (m *Manager) planRunway(pace *PaceSelector, providers []string, pools [][]observedAccount, drain bool, now time.Time) RunwayStatus {
 	cfg := pace.cfg.Throttle
 	var out RunwayStatus
 	for i, provider := range providers {
@@ -147,6 +149,9 @@ func (m *Manager) planRunway(pace *PaceSelector, providers []string, pools [][]o
 		out.Delay = out.ComputedDelay
 		if o := out.Override; o != nil {
 			out.Delay, out.delaySpeed = m.throttleDelay(cfg, o.Speed, true, now)
+		}
+		if drain {
+			out.Delay, out.delaySpeed = 0, 1
 		}
 	}
 	return out
@@ -463,11 +468,12 @@ func (m *Manager) throttle(ctx context.Context, providers []string, model string
 	now := time.Now()
 	m.mu.RLock()
 	pace, pools, ok := m.observeRunwayLocked(providers, model, now)
+	drain := ok && m.drainServesLocked(pace, providers, model, now)
 	m.mu.RUnlock()
 	if !ok {
 		return nil
 	}
-	status := m.planRunway(pace, providers, pools, now)
+	status := m.planRunway(pace, providers, pools, drain, now)
 	if !status.Config.Enabled() {
 		return nil
 	}

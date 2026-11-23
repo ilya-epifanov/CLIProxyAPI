@@ -30,6 +30,8 @@ type rankingEntryJSON struct {
 	BackAt          *time.Time       `json:"back_at"`
 	ObservedAt      *time.Time       `json:"observed_at"`
 	Stale           bool             `json:"stale"`
+	// Drain: the operator flagged the account for draining.
+	Drain bool `json:"drain"`
 }
 
 type notCandidateJSON struct {
@@ -169,6 +171,7 @@ func rankingEntryFor(rank int, entry coreauth.Ranked) rankingEntryJSON {
 		BackAt:          timePtr(entry.BackAt),
 		ObservedAt:      timePtr(entry.ObservedAt),
 		Stale:           entry.Stale,
+		Drain:           entry.Drain,
 	}
 	if out.LongWindows == nil {
 		out.LongWindows = []quota.WindowID{}

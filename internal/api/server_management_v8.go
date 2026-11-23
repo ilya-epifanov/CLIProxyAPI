@@ -34,6 +34,7 @@ func (s *Server) registerManagementV8Routes() {
 	v8.GET("/routing/ranking", s.mgmt.GetRoutingRanking)
 	v8.PUT("/routing/throttle/overrides/:provider", s.mgmt.PutThrottleOverride)
 	v8.DELETE("/routing/throttle/overrides/:provider", s.mgmt.DeleteThrottleOverride)
+	v8.PUT("/routing/drain/:auth_index", s.mgmt.PutRoutingDrain)
 	v8.GET("/routing/model-definitions/:channel", s.mgmt.GetStaticModelDefinitions)
 	v8.POST("/routing/model-definitions/refresh", s.mgmt.RefreshModelDefinitions)
 	v8.POST("/models/refresh", s.mgmt.RefreshModelDefinitions)

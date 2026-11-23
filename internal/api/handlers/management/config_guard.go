@@ -22,6 +22,7 @@ var nonConfigMutations = map[string]struct{}{
 	"POST /v8/management/models/refresh":                         {},
 	"PUT /v8/management/routing/throttle/overrides/:provider":    {},
 	"DELETE /v8/management/routing/throttle/overrides/:provider": {},
+	"PUT /v8/management/routing/drain/:auth_index":               {},
 	"DELETE /v8/management/observability/logs":                   {},
 	"POST /v8/management/credentials":                            {},
 	"DELETE /v8/management/credentials":                          {},

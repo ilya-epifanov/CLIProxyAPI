@@ -72,6 +72,12 @@ type CooldownReleaser interface {
 	ReleaseRecoveredQuotaCooldown(ctx context.Context, authID string, windows []quota.Window, sentAt time.Time) (bool, error)
 }
 
+// DrainClearer clears an account's drain flag once its quota shows the longest window
+// used up; *coreauth.Manager implements it.
+type DrainClearer interface {
+	ClearSpentDrain(authID string)
+}
+
 // Options configures New.
 type Options struct {
 	Doer  Doer
@@ -89,6 +95,8 @@ type Options struct {
 	// Cooldowns receives the same windows, so a reset made outside the proxy
 	// ends the account's quota cooldown; optional.
 	Cooldowns CooldownReleaser
+	// Drains is told about each read stored in Cache; optional.
+	Drains DrainClearer
 }
 
 // Prober probes accounts one at a time from a single queue.
@@ -102,6 +110,7 @@ type Prober struct {
 	wake            chan struct{}
 	cache           *quota.Cache
 	cooldowns       CooldownReleaser
+	drains          DrainClearer
 	// requests carries auth IDs from RequestRefresh to Run.
 	requests chan string
 
@@ -129,6 +138,7 @@ func New(opts Options) *Prober {
 		wake:            make(chan struct{}, 1),
 		cache:           opts.Cache,
 		cooldowns:       opts.Cooldowns,
+		drains:          opts.Drains,
 		requests:        make(chan string, refreshRequests),
 		entries:         map[string]*Entry{},
 		inflight:        map[string]chan struct{}{},
@@ -460,6 +470,9 @@ func (p *Prober) storeWindows(ctx context.Context, auth *coreauth.Auth, response
 	}
 	if p.cache != nil {
 		p.cache.PutProbe(auth.ID, windows)
+		if p.drains != nil {
+			p.drains.ClearSpentDrain(auth.ID)
+		}
 	}
 	if p.cooldowns != nil {
 		if _, errRelease := p.cooldowns.ReleaseRecoveredQuotaCooldown(ctx, auth.ID, windows, sentAt); errRelease != nil {
