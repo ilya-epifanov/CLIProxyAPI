@@ -944,7 +944,7 @@ func (m *Manager) availableAuthsForSelector(ctx context.Context, selector Select
 		auths = positiveWeightAuths(auths)
 	}
 
-	if !sessionAffinity && !schedulerAcross {
+	if !sessionAffinity && !schedulerAcross && drainingFrom(ctx) == nil {
 		priorityAuths, err = m.availableAuthsForRouteModelForRequest(ctx, auths, provider, routeModel, now, false, clientHeaders...)
 		if err != nil {
 			return nil, nil, err
@@ -970,7 +970,7 @@ func (m *Manager) availableAuthsForSelector(ctx context.Context, selector Select
 	if sessionAffinity {
 		selectorAuths = allAuths
 	} else {
-		selectorAuths = highestPriorityAuths(allAuths)
+		selectorAuths = highestPriorityAuths(drainingOnly(ctx, allAuths))
 	}
 	return priorityAuths, selectorAuths, nil
 }
@@ -2386,6 +2386,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		return nil, nil, &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
 	now := time.Now()
+	ctx = withDraining(ctx, m.drainingLocked(candidates, model, now))
 	var (
 		available     []*Auth
 		selectorAuths []*Auth
@@ -2450,7 +2451,6 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
 		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
-		selectorCtx = withDrainFlags(selectorCtx, m.drains)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}
@@ -2887,6 +2887,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		return nil, nil, "", &Error{Code: "auth_not_found", Message: "no auth available"}
 	}
 	now := time.Now()
+	ctx = withDraining(ctx, m.drainingLocked(candidates, model, now))
 	var (
 		available     []*Auth
 		selectorAuths []*Auth
@@ -2951,7 +2952,6 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		selectorCtx := selectorContextForAvailableAuths(ctx, selector, model)
 		selectorCtx = withSessionAffinityTransientAuthIDs(selectorCtx, transientAuthIDs)
 		selectorCtx = withSelectionModels(selectorCtx, selectionModels)
-		selectorCtx = withDrainFlags(selectorCtx, m.drains)
 		if accountingAuths != nil {
 			selectorCtx = context.WithValue(selectorCtx, weightedAccountingPoolKey{}, accountingAuths)
 		}
